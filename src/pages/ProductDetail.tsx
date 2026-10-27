@@ -1,4 +1,3 @@
-
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useProducts } from '../context/ProductContext';
@@ -28,6 +27,8 @@ interface Product {
   compare_at_price?: number | string;
   compareAtPrice?: number | string;
   images?: string[] | string;
+  imageUrl?: string;
+  image?: string;
   category?: string;
   badge?: string;
   sku?: string;
@@ -39,8 +40,33 @@ interface Product {
 
 type ProductTab = 'description' | 'shipping' | 'returns';
 
+const API_ORIGIN = (
+  import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000'
+).replace(/\/+$/, '');
+
 const FALLBACK_IMAGE =
   'https://via.placeholder.com/800x800.png?text=Product+Image';
+
+/**
+ * Robustly resolves a raw image path/URL against the API origin.
+ */
+function resolveImageUrl(rawPath: any): string {
+  if (rawPath == null) return FALLBACK_IMAGE;
+  const value = String(rawPath).trim();
+  if (!value) return FALLBACK_IMAGE;
+
+  if (
+    value.startsWith('http://') ||
+    value.startsWith('https://') ||
+    value.startsWith('data:') ||
+    value.startsWith('blob:')
+  ) {
+    return value;
+  }
+
+  if (value.startsWith('/')) return API_ORIGIN + value;
+  return API_ORIGIN + '/' + value;
+}
 
 const ProductDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -133,14 +159,11 @@ const ProductDetail: React.FC = () => {
     return () => {
       isMounted = false;
     };
-
-    // The product should only be refetched when the URL ID changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   /*
    * ------------------------------------------------------------
-   * NORMALIZED PRODUCT DATA
+   * NORMALIZED PRODUCT DATA & IMAGE GALLERY RESOLUTION
    * ------------------------------------------------------------
    */
 
@@ -149,27 +172,31 @@ const ProductDetail: React.FC = () => {
       return [FALLBACK_IMAGE];
     }
 
+    let rawList: any[] = [];
+
     if (Array.isArray(product.images)) {
-      const validImages = product.images
-        .filter(
-          (image): image is string =>
-            typeof image === 'string' && image.trim().length > 0
-        )
-        .map((image) => image.trim());
-
-      return validImages.length > 0
-        ? validImages
-        : [FALLBACK_IMAGE];
+      rawList = product.images;
+    } else if (typeof product.images === 'string') {
+      rawList = product.images
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+    } else if (typeof product.imageUrl === 'string') {
+      rawList = [product.imageUrl];
+    } else if (typeof product.image === 'string') {
+      rawList = [product.image];
     }
 
-    if (
-      typeof product.images === 'string' &&
-      product.images.trim().length > 0
-    ) {
-      return [product.images.trim()];
-    }
+    const validImages = rawList
+      .filter(
+        (item) =>
+          item != null && String(item).trim().length > 0
+      )
+      .map((item) => resolveImageUrl(item));
 
-    return [FALLBACK_IMAGE];
+    return validImages.length > 0
+      ? validImages
+      : [FALLBACK_IMAGE];
   }, [product]);
 
   const sizes = useMemo<string[]>(() => {
@@ -345,11 +372,9 @@ const ProductDetail: React.FC = () => {
   const handleImageError = (
     event: React.SyntheticEvent<HTMLImageElement>
   ) => {
-    const image = event.currentTarget;
-
-    if (image.src !== FALLBACK_IMAGE) {
-      image.src = FALLBACK_IMAGE;
-    }
+    const target = event.currentTarget;
+    target.onerror = null;
+    target.src = FALLBACK_IMAGE;
   };
 
   /*
@@ -970,12 +995,10 @@ const ProductDetail: React.FC = () => {
             </div>
 
             {/* ==================================================
-                PRODUCT INFORMATION
+                PRODUCT INFORMATION TABS
             ================================================== */}
 
             <div className="mt-9 border-t border-slate-200">
-
-              {/* Tabs */}
 
               <div className="flex border-b border-slate-200">
                 {[
@@ -1013,13 +1036,10 @@ const ProductDetail: React.FC = () => {
                 ))}
               </div>
 
-              {/* Tab Content */}
-
               <div className="py-6 text-sm leading-6 text-slate-600">
 
                 {activeTab === 'description' && (
                   <div className="space-y-5">
-
                     <p>
                       {product.description ||
                         'This product is designed to provide dependable quality, practical performance, and everyday usability.'}
@@ -1032,30 +1052,17 @@ const ProductDetail: React.FC = () => {
 
                       <ul className="space-y-2.5">
                         <li className="flex gap-3">
-                          <span className="text-slate-300">
-                            •
-                          </span>
-                          <span>
-                            Quality materials and careful
-                            construction
-                          </span>
+                          <span className="text-slate-300">•</span>
+                          <span>Quality materials and careful construction</span>
                         </li>
-
                         <li className="flex gap-3">
-                          <span className="text-slate-300">
-                            •
-                          </span>
-                          <span>
-                            Designed for reliable everyday
-                            use
-                          </span>
+                          <span className="text-slate-300">•</span>
+                          <span>Designed for reliable everyday use</span>
                         </li>
 
                         {product.sku && (
                           <li className="flex gap-3">
-                            <span className="text-slate-300">
-                              •
-                            </span>
+                            <span className="text-slate-300">•</span>
                             <span>
                               SKU:{' '}
                               <span className="font-mono font-semibold text-slate-800">
@@ -1071,7 +1078,6 @@ const ProductDetail: React.FC = () => {
 
                 {activeTab === 'shipping' && (
                   <div className="space-y-5">
-
                     <div className="flex items-start gap-4">
                       <div className="w-10 h-10 shrink-0 rounded-lg bg-slate-100 flex items-center justify-center">
                         <Truck
@@ -1084,30 +1090,16 @@ const ProductDetail: React.FC = () => {
                         <h2 className="font-bold text-slate-900">
                           Standard Delivery
                         </h2>
-
                         <p className="mt-1">
-                          Standard delivery is available
-                          across the Philippines. Estimated
-                          delivery is within 3–5 business
-                          days, subject to location and
-                          courier availability.
+                          Standard delivery is available across the Philippines. Estimated delivery is within 3–5 business days, subject to location and courier availability.
                         </p>
                       </div>
-                    </div>
-
-                    <div className="border-t border-slate-100 pt-5">
-                      <p className="text-xs text-slate-500">
-                        Delivery estimates may vary during
-                        holidays, promotional periods, or
-                        unforeseen courier delays.
-                      </p>
                     </div>
                   </div>
                 )}
 
                 {activeTab === 'returns' && (
                   <div className="space-y-5">
-
                     <div className="flex items-start gap-4">
                       <div className="w-10 h-10 shrink-0 rounded-lg bg-slate-100 flex items-center justify-center">
                         <RotateCcw
@@ -1120,22 +1112,10 @@ const ProductDetail: React.FC = () => {
                         <h2 className="font-bold text-slate-900">
                           Return Policy
                         </h2>
-
                         <p className="mt-1">
-                          Eligible items may be returned
-                          within 30 days, provided they remain
-                          in their original condition and meet
-                          the applicable return requirements.
+                          Eligible items may be returned within 30 days, provided they remain in their original condition and meet the applicable return requirements.
                         </p>
                       </div>
-                    </div>
-
-                    <div className="border-t border-slate-100 pt-5">
-                      <p className="text-xs text-slate-500">
-                        Return eligibility may depend on the
-                        product category and applicable store
-                        policy.
-                      </p>
                     </div>
                   </div>
                 )}
@@ -1147,17 +1127,14 @@ const ProductDetail: React.FC = () => {
             ================================================== */}
 
             <div className="mt-7 grid grid-cols-1 sm:grid-cols-3 gap-3">
-
               <div className="border border-slate-200 rounded-xl p-4">
                 <ShieldCheck
                   size={20}
                   className="text-slate-800 mb-3"
                 />
-
                 <h3 className="text-xs font-bold uppercase tracking-wide text-slate-900">
                   Secure Checkout
                 </h3>
-
                 <p className="mt-1.5 text-xs leading-5 text-slate-500">
                   Secure purchasing experience.
                 </p>
@@ -1168,11 +1145,9 @@ const ProductDetail: React.FC = () => {
                   size={20}
                   className="text-slate-800 mb-3"
                 />
-
                 <h3 className="text-xs font-bold uppercase tracking-wide text-slate-900">
                   Reliable Delivery
                 </h3>
-
                 <p className="mt-1.5 text-xs leading-5 text-slate-500">
                   Delivery support across the Philippines.
                 </p>
@@ -1183,16 +1158,13 @@ const ProductDetail: React.FC = () => {
                   size={20}
                   className="text-slate-800 mb-3"
                 />
-
                 <h3 className="text-xs font-bold uppercase tracking-wide text-slate-900">
                   Quality Products
                 </h3>
-
                 <p className="mt-1.5 text-xs leading-5 text-slate-500">
                   Carefully presented product information.
                 </p>
               </div>
-
             </div>
 
           </section>
@@ -1203,4 +1175,3 @@ const ProductDetail: React.FC = () => {
 };
 
 export default ProductDetail;
-

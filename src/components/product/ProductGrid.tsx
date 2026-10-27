@@ -1,7 +1,47 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { Search } from 'lucide-react';
-import type { Product } from '../../types/product'; // Adjust path if needed
+import type { Product } from '../../types/product';
+
+const API_ORIGIN = (
+  import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000'
+).replace(/\/+$/, '');
+
+const IMAGE_FALLBACK = 'https://via.placeholder.com/400x500?text=No+Image';
+
+/**
+ * Robustly resolves a product's image for grid items supporting arrays, 
+ * strings, or alternate property variations.
+ */
+function getProductImageUrl(product: any): string {
+  let rawPath: any = null;
+
+  if (Array.isArray(product?.images) && product.images.length > 0) {
+    rawPath = product.images[0];
+  } else if (typeof product?.images === 'string') {
+    rawPath = product.images;
+  } else if (typeof product?.imageUrl === 'string') {
+    rawPath = product.imageUrl;
+  } else if (typeof product?.image === 'string') {
+    rawPath = product.image;
+  }
+
+  if (rawPath == null) return IMAGE_FALLBACK;
+  const value = String(rawPath).trim();
+  if (!value) return IMAGE_FALLBACK;
+
+  if (
+    value.startsWith('http://') ||
+    value.startsWith('https://') ||
+    value.startsWith('data:') ||
+    value.startsWith('blob:')
+  ) {
+    return value;
+  }
+
+  if (value.startsWith('/')) return API_ORIGIN + value;
+  return API_ORIGIN + '/' + value;
+}
 
 interface ProductGridProps {
   products: Product[];
@@ -86,17 +126,18 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ products, onResetFilte
               </div>
 
               <img 
-                src={product.images?.[0] || 'https://via.placeholder.com/400x500?text=No+Image'} 
+                src={getProductImageUrl(product)} 
                 alt={product.name} 
                 className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
                 onError={(e) => {
                   const target = e.target as HTMLImageElement;
-                  target.src = 'https://via.placeholder.com/400x500?text=Image+Unavailable';
+                  target.onerror = null;
+                  target.src = IMAGE_FALLBACK;
                 }}
               />
             </div>
 
-            {/* Product Info - Sky Light Blue Background */}
+            {/* Product Info */}
             <div className="p-3 sm:p-5 flex flex-col flex-grow justify-between bg-sky-50 group-hover:bg-sky-100 transition-colors duration-300">
               <div>
                 <div className="flex justify-between items-start mb-1.5">
@@ -104,7 +145,6 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ products, onResetFilte
                     {product.category || 'Product'}
                   </span>
                   
-                  {/* Additional DB Details: Colors & Sizes Summary */}
                   <div className="flex gap-1">
                     {hasColors && <span className="text-[9px] text-slate-500 font-medium">{product.colors?.length} Colors</span>}
                     {hasSizes && hasColors && <span className="text-[9px] text-slate-400">•</span>}

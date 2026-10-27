@@ -1,181 +1,84 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useProducts } from '../context/ProductContext';
 import ProductGrid from '../components/product/ProductGrid';
 
-// =================================================================
-// INTERFACES & HELPERS
-// =================================================================
-interface CategoryCard {
-  title: string;
-  titleFontFamily?: string;
-  subtitle: string;
-  subtitleFontFamily?: string;
-  description: string;
-  descriptionFontFamily?: string;
-  image: string;
-  path: string;
-}
+const BANNER_IMAGE = 'https://images.unsplash.com/photo-1555507036-ab1f4038808a?auto=format&fit=crop&w=1200&q=80';
+const CATEGORY_ALIASES = ['chick', 'chicks', 'chicken', 'chickens', 'babychicken', 'lifestyle', 'essentials'];
 
-// 🔥 DYNAMIC PERMANENT FIX for Lifestyle (Cleaned single slash)
-const getApiBaseUrl = () => {
-  return `https://cc-backend-yc-team.onrender.com/api/v1`;
-};
-
-const API_BASE_URL = getApiBaseUrl();
-
-const extractErrorMessage = (data: any, fallback: string): string => {
-  if (!data) return fallback;
-  if (typeof data === 'string') return data;
-  if (typeof data.detail === 'string') return data.detail;
-  if (Array.isArray(data.detail)) {
-    return data.detail.map((err: any) => err.msg || JSON.stringify(err)).join(', ');
-  }
-  if (typeof data.message === 'string') return data.message;
-  if (typeof data.error === 'string') return data.error;
-  return fallback;
-};
-
-const parseResponse = async (response: Response) => {
-  const text = await response.text();
-  try {
-    return text ? JSON.parse(text) : {};
-  } catch {
-    return { detail: text || `Server error (Status ${response.status})` };
-  }
-};
-
-const FALLBACK_CARD: CategoryCard = {
-  title: 'Lifestyle Objects',
-  subtitle: 'Modern Essentials',
-  description: 'Elevate your daily environment with minimalist everyday carry items, desk tools, and leather accessories.',
-  image: '',
-  path: '/lifestyle'
-};
-
-export const LifestylePage: React.FC = () => {
+const LifestylePage: React.FC = () => {
   const { products, isLoading: isProductsLoading } = useProducts();
-  const [homeData, setHomeData] = useState<any>(null);
-  const [isApiLoading, setIsApiLoading] = useState<boolean>(true);
-  const [apiError, setApiError] = useState<boolean>(false);
 
-  const fetchHomeData = useCallback(async () => {
-    setIsApiLoading(true);
-    setApiError(false);
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-    try {
-      const response = await fetch(`${API_BASE_URL}/home`, {
-        method: 'GET',
-        signal: controller.signal,
-        headers: { 'Content-Type': 'application/json' },
-      });
-      clearTimeout(timeoutId);
-
-      const data = await parseResponse(response);
-
-      if (!response.ok) {
-        const msg = extractErrorMessage(data, `Status ${response.status}`);
-        throw new Error(msg);
-      }
-
-      setHomeData(data);
-    } catch (err: any) {
-      if (err.name !== 'AbortError') {
-        console.error('[LifestylePage] Failed to fetch dynamic banner. Using fallback.', err);
-        setApiError(true);
-      } else {
-        console.warn('[LifestylePage] Request timed out. Using fallback.');
-        setApiError(true);
-      }
-    } finally {
-      setIsApiLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchHomeData();
-  }, [fetchHomeData]);
-
-  const pageCard: CategoryCard = useMemo(() => {
-    if (apiError || !homeData?.carousel?.cards) return FALLBACK_CARD;
-    const matchedCard = homeData.carousel.cards.find((c: CategoryCard) => c.path === '/lifestyle');
-    return matchedCard || FALLBACK_CARD;
-  }, [homeData, apiError]);
-
-  const lifestyleProducts = useMemo(() => {
-    return (products || []).filter(p => {
-      const pCat = (p.category || '').toLowerCase();
-      return pCat === 'lifestyle' || pCat === 'essentials';
+  const categoryProducts = useMemo(() => {
+    return (products || []).filter((product: any) => {
+      const category = String(product.category || '').trim().toLowerCase();
+      return CATEGORY_ALIASES.includes(category);
     });
   }, [products]);
 
   return (
-    <div className="min-h-screen bg-zinc-50 text-zinc-900 pt-24 pb-24 px-4 sm:px-8 font-sans selection:bg-black selection:text-white">
-      <div className="max-w-6xl mx-auto space-y-12">
-        
-        <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-zinc-400">
-          <Link to="/category/all" className="hover:text-black transition-colors focus:outline-none focus:ring-2 focus:ring-sky-500 rounded px-1">Categories</Link>
-          <span aria-hidden="true">/</span>
-          <span className="text-black px-1" aria-current="page">Lifestyle</span>
+    <main className="min-h-screen bg-[#FAF8F0] px-4 pb-24 pt-8 font-sans text-[#294B35] selection:bg-[#D7A86E] sm:px-8 sm:pt-12">
+      <div className="mx-auto max-w-7xl space-y-6">
+        <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] text-[#75816B] sm:text-xs">
+          <Link to="/category/all" className="rounded px-1 hover:text-[#C77B3B] focus:outline-none focus:ring-2 focus:ring-[#C77B3B]">
+            Categories
+          </Link>
+          <span aria-hidden="true" className="text-[#B9BBAA]">/</span>
+          <span aria-current="page" className="px-1 font-extrabold text-[#294B35]">Chick Collection</span>
         </nav>
 
-        <header className="relative w-full h-80 sm:h-96 rounded-3xl overflow-hidden shadow-2xl bg-zinc-900 border border-zinc-800">
-          {pageCard.image ? (
-            <img 
-              src={pageCard.image} 
-              alt="Lifestyle Collection Presentation" 
-              className="absolute inset-0 w-full h-full object-cover object-center opacity-50"
-            />
-          ) : null}
-          <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent z-10" />
-          
-          <div className="absolute bottom-8 left-8 right-8 z-20 space-y-3">
-            <span 
-              className="bg-white/10 backdrop-blur-md text-white border border-white/20 text-[10px] font-bold uppercase tracking-[0.25em] px-4 py-1.5 rounded-full inline-block"
-              style={{ fontFamily: pageCard.subtitleFontFamily || 'inherit' }}
-            >
-              {pageCard.subtitle}
+        <header className="relative isolate h-44 w-full overflow-hidden rounded-2xl border border-[#294B35]/15 bg-[#203B2A] shadow-lg sm:h-56 md:h-60">
+          <img
+            src={BANNER_IMAGE}
+            alt={`EGB Backyard ${title}`}
+            loading="eager"
+            decoding="async"
+            className="absolute inset-0 -z-20 h-full w-full object-cover object-center"
+          />
+          <div className="absolute inset-0 -z-10 bg-gradient-to-r from-[#15261A]/90 via-[#15261A]/60 to-[#15261A]/15" />
+          <div className="absolute inset-0 flex flex-col justify-center p-5 sm:p-8">
+            <span className="mb-2 inline-flex w-fit rounded-full border border-white/25 bg-black/20 px-3 py-1 text-[9px] font-extrabold uppercase tracking-[0.2em] text-white sm:text-[10px]">
+              EGB Backyard · Baby & Small Chickens
             </span>
-            <h1 
-              className="text-4xl sm:text-6xl font-black text-white tracking-tight"
-              style={{ fontFamily: pageCard.titleFontFamily || 'inherit' }}
-            >
-              {pageCard.title}
+            <h1 className="max-w-2xl font-serif text-2xl font-black leading-tight text-white sm:text-4xl">
+              Chick Collection
             </h1>
-            <p 
-              className="text-zinc-300 text-sm max-w-xl"
-              style={{ fontFamily: pageCard.descriptionFontFamily || 'inherit' }}
-            >
-              {pageCard.description}
+            <p className="mt-2 max-w-xl text-xs leading-relaxed text-white/90 sm:text-sm">
+              Start or grow your backyard flock with chicks and young chickens from EGB Backyard.
             </p>
           </div>
         </header>
 
-        <section className="space-y-6" aria-label="Lifestyle Products">
-          <div className="flex justify-between items-center border-b border-zinc-200 pb-4">
-            <h2 className="text-xs uppercase font-extrabold tracking-[0.2em] text-zinc-400">
-              Showing {lifestyleProducts.length} Items
+        <section className="space-y-5" aria-label="Chick Catalog">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#294B35]/15 pb-4">
+            <h2 className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.18em] text-[#526B4E] sm:text-sm">
+              <span className="h-2 w-2 rounded-full bg-yellow-600" aria-hidden="true" />
+              Chick Catalog
             </h2>
+            <span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-[#526B4E]">
+              {categoryProducts.length} {categoryProducts.length === 1 ? 'item' : 'items'}
+            </span>
           </div>
 
-          {isProductsLoading || isApiLoading ? (
-            <div className="py-24 text-center text-zinc-400 text-xs font-bold uppercase tracking-widest" aria-live="polite">
-              Loading lifestyle collection...
+          {isProductsLoading ? (
+            <div className="flex min-h-40 flex-col items-center justify-center gap-3 text-sm font-semibold text-[#75816B]" role="status" aria-live="polite">
+              <span className="h-8 w-8 animate-spin rounded-full border-4 border-[#C77B3B] border-t-transparent" />
+              Loading products...
             </div>
-          ) : lifestyleProducts.length > 0 ? (
-            <ProductGrid products={lifestyleProducts} />
+          ) : categoryProducts.length > 0 ? (
+            <ProductGrid products={categoryProducts} />
           ) : (
-            <div className="py-24 text-center text-zinc-400 text-xs uppercase tracking-widest border border-dashed border-zinc-200 rounded-3xl bg-white shadow-sm">
-              No lifestyle items available at the moment.
+            <div className="space-y-2 rounded-2xl border border-dashed border-[#294B35]/20 bg-white px-5 py-12 text-center shadow-sm">
+              <p className="text-sm font-bold text-[#294B35]">No products available in this collection yet.</p>
+              <p className="text-xs text-[#75816B]">Please check back soon or explore another farm category.</p>
+              <Link to="/category/all" className="mt-2 inline-flex rounded-full bg-[#294B35] px-5 py-2.5 text-xs font-bold text-white transition hover:bg-[#203B2A] focus:outline-none focus:ring-2 focus:ring-[#C77B3B] focus:ring-offset-2">
+                Browse all categories
+              </Link>
             </div>
           )}
         </section>
-
       </div>
-    </div>
+    </main>
   );
 };
 

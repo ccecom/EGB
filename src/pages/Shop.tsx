@@ -1,18 +1,47 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { Search, X } from 'lucide-react';
 import { useProducts } from '../context/ProductContext';
 import ProductGrid from '../components/product/ProductGrid';
 
 export const Shop: React.FC = () => {
   const { products, isLoading } = useProducts();
+  const searchInputRef = useRef<HTMLInputElement>(null);
   
-  // 1. Hook into the URL search parameters
-  const [searchParams] = useSearchParams();
+  // Hook into URL search parameters
+  const [searchParams, setSearchParams] = useSearchParams();
   
-  // 2. Extract the '?search=' parameter if it exists
+  // Extract search and focus parameters
   const searchQuery = searchParams.get('search')?.toLowerCase() || '';
+  const shouldFocusSearch = searchParams.get('focusSearch') === 'true';
 
-  // 3. Filter products dynamically based on the search query
+  // Handle input text changes
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    if (value) {
+      setSearchParams({ search: value });
+    } else {
+      setSearchParams({});
+    }
+  };
+
+  // Clear search input
+  const handleClearSearch = () => {
+    setSearchParams({});
+    searchInputRef.current?.focus();
+  };
+
+  // Auto-focus shop page search bar on redirect from Navbar Search icon
+  useEffect(() => {
+    if (shouldFocusSearch || searchQuery) {
+      setTimeout(() => {
+        searchInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        searchInputRef.current?.focus();
+      }, 100);
+    }
+  }, [shouldFocusSearch, searchQuery]);
+
+  // Filter products dynamically
   const filteredProducts = useMemo(() => {
     if (!searchQuery) return products;
     
@@ -29,6 +58,36 @@ export const Shop: React.FC = () => {
     <div className="min-h-screen bg-white text-slate-800 p-6 sm:p-10 font-['Quincy',_serif] selection:bg-[#38bdf8]/20 pb-24">
       <div className="max-w-6xl mx-auto">
         
+        {/* =========================================================
+            TOP SEARCH BAR ON THE SHOP PAGE
+        ========================================================== */}
+        <div className="mb-8 font-sans">
+          <div className="relative max-w-md mx-auto sm:mx-0">
+            <Search
+              className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none"
+              strokeWidth={2}
+            />
+            <input
+              ref={searchInputRef}
+              type="text"
+              value={searchQuery}
+              onChange={handleSearchChange}
+              placeholder="Search products, categories..."
+              className="w-full h-11 bg-slate-50 border border-slate-200 rounded-2xl pl-10 pr-10 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:bg-white focus:border-black focus:ring-1 focus:ring-black transition-all shadow-sm"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={handleClearSearch}
+                aria-label="Clear search"
+                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-200 transition-colors"
+              >
+                <X className="w-4 h-4" strokeWidth={2} />
+              </button>
+            )}
+          </div>
+        </div>
+
         {/* Header Block & Categories Link */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-slate-100 pb-6 mb-10 gap-4 font-sans">
           <div>
@@ -66,9 +125,12 @@ export const Shop: React.FC = () => {
             <p className="text-sm text-slate-500 max-w-sm mb-6">
               We couldn't find any products matching "{searchQuery}". Try checking for typos or searching with different keywords.
             </p>
-            <Link to="/shop" className="px-6 py-2.5 bg-[#0a0a0a] text-white rounded-xl text-sm font-bold hover:bg-zinc-800 transition-colors">
+            <button
+              onClick={handleClearSearch}
+              className="px-6 py-2.5 bg-[#0a0a0a] text-white rounded-xl text-sm font-bold hover:bg-zinc-800 transition-colors"
+            >
               Clear Search
-            </Link>
+            </button>
           </div>
         )}
       </div>
@@ -77,3 +139,6 @@ export const Shop: React.FC = () => {
 };
 
 export default Shop;
+
+
+  

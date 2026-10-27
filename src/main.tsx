@@ -10,13 +10,21 @@ import { ProductProvider } from './context/ProductContext';
 import { CheckoutProvider } from './context/CheckoutContext';
 import { OrderProvider } from './context/OrderContext';
 
-// Legacy window injection check (Note: React hooks can only be executed inside components)
+// ========== APPLY THEME BEFORE ANYTHING RENDERS ==========
+const savedTheme = localStorage.getItem('theme');
+const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+if (savedTheme === 'dark' || (!savedTheme && prefersDark)) {
+  document.documentElement.classList.add('dark');
+} else {
+  document.documentElement.classList.remove('dark');
+}
+// ========================================================
+
 (window as any).useAuth = useAuth;
 
 const AuthenticatedProviders: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
-  
-  // Safely extract ID whether backend returns `id` or MongoDB `_id`
   const userId = user?.id ?? (user as any)?._id ?? null;
 
   return (

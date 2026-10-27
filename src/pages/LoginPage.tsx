@@ -158,7 +158,7 @@ const LoginPage: React.FC = () => {
             <span className="ml-1 text-[26px] font-light text-sky-400 tracking-tight">Ecom</span>
           </div>
           <p className="text-[10px] tracking-[1.5px] uppercase text-zinc-400 -mt-1 font-medium">
-            Counci Croff
+            EGB Backyard
           </p>
         </Link>
 
@@ -373,7 +373,7 @@ const LoginPage: React.FC = () => {
           </div>
           
           <div className="text-center text-[11px] text-gray-400 uppercase tracking-wider font-semibold">
-            Philippine Marketplace • Counci Croff
+            Philippine Marketplace • EGB Backyard
           </div>
         </div>
       </footer>

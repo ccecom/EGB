@@ -1,153 +1,230 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
+import {
+  ArrowRight,
+  ArrowUpRight,
+  ChevronLeft,
+  ChevronRight,
+  CheckCircle2,
+  Leaf,
+  Heart,
+  Menu,
+  X,
+  RefreshCw,
+} from 'lucide-react';
+import api from '../services/api';
 import '../index.css';
 
-// =================================================================
-// INTERFACES
-// =================================================================
-interface BackgroundConfig {
-  type?: string;
-  source: string;
-  fallbackImage: string;
+// ================================================================
+// TYPES & INTERFACES (Fully Synchronized with Dashboard Schema)
+// ================================================================
+
+interface CategoryCard {
+  id: number | string;
+  title: string;
+  subtitle: string;
+  description: string;
+  image: string;
+  path: string;
+  fontFamily?: string;
+}
+
+interface StatItem {
+  number: string;
+  label: string;
 }
 
 interface HeroConfig {
   badgeText: string;
   badgeFontFamily?: string;
   titleTop: string;
-  titleTopFontFamily?: string;
   titleBottom: string;
-  titleBottomFontFamily?: string;
+  titleFontFamily?: string;
   heading: string;
   headingFontFamily?: string;
   narrative: string;
   narrativeFontFamily?: string;
   ctaText: string;
   ctaPath: string;
-  background: BackgroundConfig;
-}
-
-interface CategoryCard {
-  id: number;
-  title: string;
-  titleFontFamily?: string;
-  subtitle: string;
-  subtitleFontFamily?: string;
-  description: string;
-  descriptionFontFamily?: string;
-  image: string;
-  path: string;
+  background?: { type: string; source: string; fallbackImage: string };
 }
 
 interface CarouselConfig {
   eyebrow: string;
-  eyebrowFontFamily?: string;
   title: string;
-  titleFontFamily?: string;
   cards: CategoryCard[];
-}
-
-interface StatItem {
-  number: string;
-  numberFontFamily?: string;
-  label: string;
-  labelFontFamily?: string;
 }
 
 interface StatsConfig {
   eyebrow: string;
-  eyebrowFontFamily?: string;
   heading: string;
-  headingFontFamily?: string;
   items: StatItem[];
 }
 
-interface HomeData {
+interface ContactConfig {
+  phone?: string;
+  email?: string;
+  address?: string;
+  facebook?: string;
+  instagram?: string;
+  tiktok?: string;
+  messenger?: string;
+}
+
+interface HomeContent {
   hero: HeroConfig;
   carousel: CarouselConfig;
   stats: StatsConfig;
+  contacts?: ContactConfig;
 }
 
-// =================================================================
-// API CONFIGURATION
-// =================================================================
-const API_BASE_URL = 'https://cc-backend-yc-team.onrender.com/api/v1';
+// ================================================================
+// ROOSTER LOGO (Custom Inline SVG)
+// ================================================================
+
+interface RoosterLogoProps {
+  className?: string;
+  light?: boolean;
+}
+
+const RoosterLogo: React.FC<RoosterLogoProps> = ({
+  className = 'w-12 h-12',
+  light = false,
+}) => {
+  const ink = light ? '#FFF8E9' : '#294B35';
+  const accent = light ? '#E9BD75' : '#C77B3B';
+
+  return (
+    <svg
+      viewBox="0 0 100 100"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      role="img"
+      aria-label="EGB Backyard rooster logo"
+    >
+      <path
+        d="M43 19C36 11 39 4 46 8C52 10 53 15 53 18C58 9 66 10 65 17C64 22 59 25 54 27"
+        fill={accent}
+      />
+      <path
+        d="M57 44C70 25 83 31 78 42C91 36 95 48 84 53C94 57 87 68 75 64L62 58"
+        fill={ink}
+      />
+      <path
+        d="M27 57C26 42 39 28 53 29C67 30 73 42 69 54C66 66 56 75 43 74C31 73 23 66 27 57Z"
+        fill={ink}
+      />
+      <path
+        d="M35 53C43 43 57 43 63 53C57 62 46 66 36 62"
+        fill={accent}
+      />
+      <path
+        d="M39 36C36 29 39 20 48 20C56 20 60 27 57 35L53 44L40 45Z"
+        fill={ink}
+      />
+      <path d="M55 26L67 31L56 35Z" fill={accent} />
+      <circle cx="49" cy="27" r="2.4" fill={accent} />
+      <path
+        d="M49 36C45 40 49 45 53 41L55 35"
+        fill={accent}
+      />
+      <path
+        d="M40 72L39 81M56 71L58 81M34 82H44M53 82H63"
+        stroke={ink}
+        strokeWidth="3"
+        strokeLinecap="round"
+      />
+      <path
+        d="M19 88H81"
+        stroke={accent}
+        strokeWidth="2.5"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+};
+
+// ================================================================
+// MAIN HOME COMPONENT
+// ================================================================
 
 const Home: React.FC = () => {
-  const [data, setData] = useState<HomeData | null>(null);
+  const [content, setContent] = useState<HomeContent | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [isHovering, setIsHovering] = useState(false);
 
   const dragStartX = useRef<number | null>(null);
   const dragCurrentX = useRef<number | null>(null);
   const hasDragged = useRef(false);
-  const carouselRef = useRef<HTMLDivElement>(null);
 
-  // =================================================================
-  // DATA FETCHING 
-  // =================================================================
-  const fetchHomeData = useCallback(async (signal?: AbortSignal) => {
+  const fetchHomeContent = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
-      const response = await fetch(`${API_BASE_URL}/home`, { signal });
-      if (!response.ok) throw new Error(`Server responded with status ${response.status}`);
-      const result: HomeData = await response.json();
-      setData(result);
-    } catch (err: any) {
-      if (err.name !== 'AbortError') {
-        console.error('[Home Component] Data Fetch Error:', err);
+      const response = await api.get('/api/v1/home');
+      const raw = response.data?.data ?? response.data?.content ?? response.data;
+      if (!raw || typeof raw !== 'object' || !raw.hero || !raw.carousel) {
+        throw new Error('The homepage API returned incomplete content.');
       }
+      const cards = Array.isArray(raw.carousel.cards) ? raw.carousel.cards : [];
+      const stats = raw.stats && typeof raw.stats === 'object' ? raw.stats : {};
+      setContent({
+        hero: raw.hero,
+        carousel: { ...raw.carousel, cards },
+        stats: { ...stats, items: Array.isArray(stats.items) ? stats.items : [] },
+        contacts: raw.contacts && typeof raw.contacts === 'object' ? raw.contacts : {},
+      } as HomeContent);
+    } catch (err) {
+      console.error('[Home] Failed to load live homepage content.', err);
+      setContent(null);
+      setLoadError('We could not load the live homepage content. Check your connection and try again.');
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    const controller = new AbortController();
-    fetchHomeData(controller.signal);
-    return () => controller.abort();
-  }, [fetchHomeData]);
+    void fetchHomeContent();
+  }, [fetchHomeContent]);
 
-  // =================================================================
-  // CAROUSEL LOGIC
-  // =================================================================
-  const cards = data?.carousel?.cards || [];
-  const totalCards = cards.length;
+  const categories = content?.carousel.cards ?? [];
+  const totalCards = categories.length;
 
-  useEffect(() => {
-    if (isDragging || isHovering || totalCards <= 1) return;
-    const interval = setInterval(() => {
-      setActiveIndex((prev) => (prev + 1) % totalCards);
-    }, 7000);
-    return () => clearInterval(interval);
-  }, [isDragging, isHovering, totalCards]);
-
-  const goTo = useCallback((index: number) => {
-    if (totalCards === 0) return;
-    setActiveIndex((index + totalCards) % totalCards);
-  }, [totalCards]);
+  const goTo = useCallback(
+    (index: number) => {
+      setActiveIndex(totalCards ? (index + totalCards) % totalCards : 0);
+    },
+    [totalCards]
+  );
 
   const goNext = useCallback(() => {
-    if (totalCards === 0) return;
-    setActiveIndex((prev) => (prev + 1) % totalCards);
+    setActiveIndex((prev) => (totalCards ? (prev + 1) % totalCards : 0));
   }, [totalCards]);
 
   const goPrev = useCallback(() => {
-    if (totalCards === 0) return;
-    setActiveIndex((prev) => (prev === 0 ? totalCards - 1 : prev - 1));
+    setActiveIndex((prev) =>
+      totalCards === 0 ? 0 : prev === 0 ? totalCards - 1 : prev - 1
+    );
   }, [totalCards]);
 
-  // =================================================================
-  // UNIFIED POINTER EVENTS
-  // =================================================================
+  useEffect(() => {
+    if (isDragging || isHovering || totalCards === 0) return;
+    const interval = window.setInterval(goNext, 6000);
+    return () => window.clearInterval(interval);
+  }, [goNext, isDragging, isHovering, totalCards]);
+
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    e.currentTarget.setPointerCapture(e.pointerId);
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
     dragStartX.current = e.clientX;
     dragCurrentX.current = e.clientX;
     hasDragged.current = false;
     setIsDragging(true);
+    e.currentTarget.setPointerCapture(e.pointerId);
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -159,18 +236,24 @@ const Home: React.FC = () => {
   };
 
   const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
-    e.currentTarget.releasePointerCapture(e.pointerId);
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
     if (!isDragging || dragStartX.current === null || dragCurrentX.current === null) {
       setIsDragging(false);
       return;
     }
     const distance = dragStartX.current - dragCurrentX.current;
-    const swipeThreshold = 55;
-
-    if (Math.abs(distance) > swipeThreshold) {
+    if (Math.abs(distance) > 50) {
       if (distance > 0) goNext();
       else goPrev();
     }
+    dragStartX.current = null;
+    dragCurrentX.current = null;
+    setIsDragging(false);
+  };
+
+  const handlePointerCancel = () => {
     dragStartX.current = null;
     dragCurrentX.current = null;
     setIsDragging(false);
@@ -181,237 +264,447 @@ const Home: React.FC = () => {
     if (e.key === 'ArrowLeft') goPrev();
   };
 
-  // =================================================================
-  // RENDER STATES
-  // =================================================================
-  
-  if (loading || !data || !data.hero || !data.carousel || !data.stats) {
+  if (loading) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-black text-white">
-        <div className="relative z-10 flex flex-col items-center">
-          <div className="w-12 h-12 border-2 border-sky-400/20 border-t-sky-400 rounded-full animate-spin mb-6" />
-          <span className="text-[10px] sm:text-xs tracking-[0.4em] uppercase font-medium text-zinc-400">
-            initializing...
-          </span>
+      <main className="flex min-h-screen items-center justify-center bg-[#FAF8F0] px-6 text-[#294B35]" role="status" aria-live="polite">
+        <div className="flex flex-col items-center gap-4 text-center">
+          <div className="h-10 w-10 animate-spin rounded-full border-4 border-[#294B35]/15 border-t-[#C77B3B]" />
+          <p className="font-serif text-2xl font-bold">Loading EGB Backyard...</p>
+          <p className="text-sm text-[#75816B]">Fetching the latest homepage content.</p>
         </div>
-      </div>
+      </main>
     );
   }
 
-  const { hero, carousel: carouselConfig, stats: statsConfig } = data;
-  const isVideoBackground = hero.background?.type === 'video' || (!hero.background?.type && hero.background?.source && !hero.background.source.match(/\.(jpeg|jpg|png|webp|gif)$/i));
+  if (loadError || !content) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#FAF8F0] px-6 text-[#294B35]">
+        <div className="max-w-md rounded-3xl border border-[#294B35]/10 bg-white p-8 text-center shadow-sm">
+          <h1 className="font-serif text-2xl font-black">Homepage temporarily unavailable</h1>
+          <p className="mt-3 text-sm leading-6 text-[#75816B]">{loadError || 'Live homepage content is not available.'}</p>
+          <button type="button" onClick={() => void fetchHomeContent()} className="mt-6 rounded-full bg-[#294B35] px-6 py-3 text-xs font-bold uppercase tracking-wider text-white hover:bg-[#C77B3B]">Try again</button>
+        </div>
+      </main>
+    );
+  }
 
   return (
-    <div className="bg-black overflow-hidden selection:bg-sky-400 selection:text-black font-sans">
+    <main className="min-h-screen overflow-hidden bg-[#FAF8F0] text-[#294B35] selection:bg-[#D7A86E] selection:text-[#243B2B]">
       
-      {/* --- HERO SECTION (kept dark) --- */}
-      <section className="relative min-h-screen flex items-center justify-center overflow-hidden">
-        {isVideoBackground ? (
-          <video
-            autoPlay
-            muted
-            loop
-            playsInline
-            poster={hero.background.fallbackImage}
-            className="absolute inset-0 w-full h-full object-cover scale-100 opacity-85"
-          >
-            <source src={hero.background.source} type="video/mp4" />
-          </video>
-        ) : (
-          <div
-            className="absolute inset-0 w-full h-full bg-cover bg-center scale-100 opacity-85"
-            style={{ backgroundImage: `url(${hero.background.source || hero.background.fallbackImage})` }}
-          />
-        )}
+      {/* ANNOUNCEMENT BAR */}
+      <div className="bg-[#294B35] px-4 py-2.5 text-center text-[10px] sm:text-xs font-semibold uppercase tracking-[0.19em] text-[#FFF8E9]">
+        <span className="inline-flex items-center justify-center gap-2">
+          <Leaf className="h-3.5 w-3.5 text-[#E9BD75]" />
+          {content.hero.badgeText}
+          <Leaf className="h-3.5 w-3.5 text-[#E9BD75]" />
+        </span>
+      </div>
 
-        <div className="absolute inset-0 bg-black/35" />
-        <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-black/85" />
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(56,189,248,0.06)_0%,transparent_70%)]" />
-
-        <div className="relative z-20 w-full max-w-6xl mx-auto px-6 text-center pt-12 sm:pt-16">
-          <div className="flex justify-center mb-6 sm:mb-8">
-            <div className="px-4.5 py-1.5 rounded-full border border-white/15 bg-black/40 backdrop-blur-xl shadow-lg">
-              <span 
-                className="text-[10px] sm:text-xs tracking-[0.35em] uppercase font-medium text-zinc-200"
-                style={{ fontFamily: hero.badgeFontFamily || 'inherit' }}
-              >
-                {hero.badgeText}
-              </span>
+      {/* HEADER */}
+      <header className="relative z-50 border-b border-[#294B35]/10 bg-[#FAF8F0]">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-5 py-3.5 sm:px-8 lg:px-12">
+          <Link to="/" className="group flex shrink-0 items-center gap-2.5" aria-label="EGB Backyard home" onClick={() => setMenuOpen(false)}>
+            <RoosterLogo className="h-11 w-11 sm:h-14 sm:w-14 transition-transform duration-300 group-hover:-rotate-6" />
+            <div className="leading-none">
+              <div className="font-serif text-xl font-black tracking-[-0.06em] text-[#294B35] sm:text-2xl">
+                EGB <span className="text-[#C77B3B]">Backyard</span>
+              </div>
+              <p className="mt-1.5 text-[8px] font-bold uppercase tracking-[0.21em] text-[#75816B] sm:text-[9px]">
+                Poultry & Backyard Living
+              </p>
             </div>
-          </div>
+          </Link>
 
-          <div className="relative flex flex-col items-center mb-5 sm:mb-6 select-none">
-            <div className="absolute w-[220px] sm:w-[360px] md:w-[520px] h-[120px] bg-sky-500/10 blur-[90px] rounded-full top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none" />
-            <svg width="100%" height="100%" viewBox="0 0 1000 320" fill="none" className="max-w-[720px] drop-shadow-[0_16px_36px_rgba(0,0,0,0.8)]">
-              <defs>
-                <linearGradient id="chromeSkyGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stopColor="#F0F9FF" />
-                  <stop offset="40%" stopColor="#BAE6FD" />
-                  <stop offset="75%" stopColor="#38BDF8" />
-                  <stop offset="100%" stopColor="#0284C7" />
-                </linearGradient>
-                <linearGradient id="zincSilkGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-                  <stop offset="0%" stopColor="#FFFFFF" />
-                  <stop offset="100%" stopColor="#D4D4D8" />
-                </linearGradient>
-              </defs>
-              <text x="500" y="150" textAnchor="middle" fill="url(#zincSilkGrad)" fontSize="150" fontWeight="900" fontFamily={hero.titleTopFontFamily || 'system-ui, sans-serif'} letterSpacing="-0.04em">
-                {hero.titleTop}
-              </text>
-              <text x="515" y="255" textAnchor="middle" fill="url(#chromeSkyGrad)" fontSize="175" fontWeight="950" fontFamily={hero.titleBottomFontFamily || 'system-ui, sans-serif'} letterSpacing="-0.06em" style={{ filter: 'drop-shadow(0 10px 24px rgba(14,165,233,0.35))' }}>
-                {hero.titleBottom}
-              </text>
-            </svg>
-          </div>
+          <nav className="hidden items-center gap-7 md:flex lg:gap-9">
+            <Link to="/" className="text-xs font-bold text-[#294B35] transition-colors hover:text-[#C77B3B]">Home</Link>
+            <Link to="/shop" className="text-xs font-semibold text-[#6E7767] transition-colors hover:text-[#C77B3B]">Shop All</Link>
+            <a href="#categories" className="text-xs font-semibold text-[#6E7767] transition-colors hover:text-[#C77B3B]">Our Birds</a>
+            <a href="#about" className="text-xs font-semibold text-[#6E7767] transition-colors hover:text-[#C77B3B]">About Us</a>
+          </nav>
 
-          <div className="max-w-2xl mx-auto">
-            <h1 className="text-white font-bold text-2xl sm:text-3xl md:text-4xl tracking-tight leading-[1.2]" style={{ fontFamily: hero.headingFontFamily || 'inherit' }}>
-              {hero.heading}
-            </h1>
-            <p className="mt-4 text-zinc-300 text-xs sm:text-sm md:text-base leading-relaxed font-light" style={{ fontFamily: hero.narrativeFontFamily || 'inherit' }}>
-              {hero.narrative}
-            </p>
-          </div>
-
-          <div className="flex flex-col sm:flex-row justify-center gap-3.5 mt-8 sm:mt-10">
-            <Link to={hero.ctaPath} className="group relative overflow-hidden px-7 py-3 rounded-full font-bold uppercase tracking-[0.16em] text-[10px] sm:text-[11px] text-black bg-gradient-to-r from-sky-400 via-cyan-300 to-sky-500 shadow-[0_10px_30px_rgba(14,165,233,0.25)] transition-all duration-500 hover:scale-[1.02] hover:shadow-[0_14px_40px_rgba(14,165,233,0.35)]">
-              <span className="relative z-10 flex items-center justify-center gap-2">
-                {hero.ctaText}
-                <span className="transition-transform duration-300 group-hover:translate-x-1">→</span>
-              </span>
-              <div className="absolute inset-0 bg-white/20 -translate-x-[120%] skew-x-12 animate-[shine_6s_infinite_ease-in-out]" />
+          <div className="hidden items-center gap-3 sm:flex">
+            <Link to="/dashboard/home" className="inline-flex items-center gap-1.5 rounded-full border border-[#294B35]/20 bg-transparent px-4 py-2.5 text-[10px] font-bold uppercase tracking-[0.1em] text-[#294B35] transition-colors hover:bg-[#294B35] hover:text-white">
+              Customize
+            </Link>
+            <Link to="/shop" className="inline-flex items-center gap-2 rounded-full bg-[#294B35] px-5 py-3 text-[10px] font-bold uppercase tracking-[0.12em] text-white transition-all duration-300 hover:bg-[#C77B3B]">
+              Browse Birds <ArrowUpRight className="h-3.5 w-3.5" />
             </Link>
           </div>
+
+          <button type="button" aria-label={menuOpen ? 'Close menu' : 'Open menu'} aria-expanded={menuOpen} onClick={() => setMenuOpen((prev) => !prev)} className="flex h-10 w-10 items-center justify-center rounded-full border border-[#294B35]/15 text-[#294B35] transition-colors hover:bg-[#294B35] hover:text-white md:hidden">
+            {menuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+          </button>
         </div>
 
-        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex flex-col items-center select-none pointer-events-none">
-          <span className="text-[9px] tracking-[0.4em] uppercase text-zinc-400 font-medium">Scroll</span>
-          <div className="mt-2 w-px h-10 bg-gradient-to-b from-sky-400/60 via-sky-900/30 to-transparent" />
-        </div>
-      </section>
+        {menuOpen && (
+          <nav className="absolute left-0 right-0 top-full border-b border-[#294B35]/10 bg-[#FAF8F0] px-5 pb-5 pt-2 shadow-lg md:hidden">
+            <div className="mx-auto flex max-w-7xl flex-col">
+              <Link to="/" onClick={() => setMenuOpen(false)} className="border-b border-[#294B35]/10 py-3.5 text-sm font-semibold">Home</Link>
+              <Link to="/shop" onClick={() => setMenuOpen(false)} className="border-b border-[#294B35]/10 py-3.5 text-sm font-semibold">Shop All Birds</Link>
+              <a href="#categories" onClick={() => setMenuOpen(false)} className="border-b border-[#294B35]/10 py-3.5 text-sm font-semibold">Our Categories</a>
+              <a href="#about" onClick={() => setMenuOpen(false)} className="border-b border-[#294B35]/10 py-3.5 text-sm font-semibold">About EGB Backyard</a>
+              <Link to="/dashboard/home" onClick={() => setMenuOpen(false)} className="py-3.5 text-sm font-semibold text-[#C77B3B]">Customize Homepage (Dashboard)</Link>
+            </div>
+          </nav>
+        )}
+      </header>
 
-      {/* --- CAROUSEL SECTION (light theme) --- */}
-      <section className="relative py-16 md:py-24 bg-slate-50">
-        <div className="max-w-7xl mx-auto px-6">
-          <div className="text-center mb-12 md:mb-16">
-            <span className="uppercase tracking-[0.45em] text-sky-500 text-[11px] font-bold block" style={{ fontFamily: carouselConfig.eyebrowFontFamily || 'inherit' }}>
-              {carouselConfig.eyebrow}
-            </span>
-            <h2 className="mt-2 text-slate-800 font-black text-2xl sm:text-3xl md:text-4xl tracking-tight" style={{ fontFamily: carouselConfig.titleFontFamily || 'inherit' }}>
-              {carouselConfig.title}
-            </h2>
-            <div className="w-8 h-px bg-sky-400/50 mx-auto mt-4" />
-          </div>
+      {/* HERO SECTION */}
+      <section className="relative isolate overflow-hidden bg-[#F0EBDD]">
+        <div className="pointer-events-none absolute -right-32 -top-24 h-96 w-96 rounded-full bg-[#D9C9A7]/30 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-24 -left-24 h-72 w-72 rounded-full bg-[#9CAA85]/20 blur-3xl" />
 
-          <div className="relative">
-            <button onClick={goPrev} aria-label="Previous slide" className="hidden md:flex absolute left-2 lg:left-12 top-1/2 -translate-y-1/2 z-50 w-12 h-12 rounded-full bg-white border border-slate-200 text-slate-700 items-center justify-center shadow-md transition-all duration-300 hover:bg-sky-400 hover:text-white hover:border-sky-400 hover:scale-105 cursor-pointer">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" /></svg>
-            </button>
-            <button onClick={goNext} aria-label="Next slide" className="hidden md:flex absolute right-2 lg:right-12 top-1/2 -translate-y-1/2 z-50 w-12 h-12 rounded-full bg-white border border-slate-200 text-slate-700 items-center justify-center shadow-md transition-all duration-300 hover:bg-sky-400 hover:text-white hover:border-sky-400 hover:scale-105 cursor-pointer">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" /></svg>
-            </button>
+        <div className="relative mx-auto grid min-h-[590px] max-w-7xl items-center gap-10 px-5 py-12 sm:px-8 sm:py-16 md:min-h-[650px] md:grid-cols-[0.92fr_1.08fr] md:gap-8 lg:px-12 lg:py-20">
+          <div className="relative z-10 max-w-xl">
+            <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-[#294B35]/15 bg-white/60 px-3.5 py-2">
+              <span className="h-2 w-2 rounded-full bg-[#C77B3B]" />
+              <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-[#526B4E] sm:text-[10px]" style={{ fontFamily: content.hero.badgeFontFamily || 'inherit' }}>
+                {content.hero.badgeText}
+              </span>
+            </div>
 
-            <div
-              ref={carouselRef}
-              role="region"
-              aria-roledescription="carousel"
-              aria-label="Product categories"
-              tabIndex={0}
-              className="relative h-[340px] sm:h-[390px] md:h-[440px] flex items-center justify-center select-none cursor-grab active:cursor-grabbing touch-pan-y outline-none"
-              style={{ perspective: '2200px', transformStyle: 'preserve-3d' }}
-              onMouseEnter={() => setIsHovering(true)}
-              onMouseLeave={() => { setIsHovering(false); setIsDragging(false); }}
-              onPointerDown={handlePointerDown}
-              onPointerMove={handlePointerMove}
-              onPointerUp={handlePointerUp}
-              onPointerCancel={handlePointerUp}
-              onKeyDown={handleKeyDown}
-            >
-              {cards.length > 0 && cards.map((card, index) => {
-                let relative = index - activeIndex;
-                if (relative < -1) relative += totalCards;
-                if (relative > 1) relative -= totalCards;
+            <h1 className="font-serif text-[clamp(3.3rem,8vw,6.5rem)] font-black leading-[0.91] tracking-[-0.065em] text-[#294B35]" style={{ fontFamily: content.hero.titleFontFamily || 'inherit' }}>
+              {content.hero.titleTop}
+              <br />
+              <span className="relative inline-block text-[#C77B3B]">
+                {content.hero.titleBottom}
+                <svg className="absolute -bottom-2 left-0 w-full" viewBox="0 0 300 15" fill="none" aria-hidden="true">
+                  <path d="M4 10C83 1 208 1 296 7" stroke="#C77B3B" strokeWidth="4" strokeLinecap="round" />
+                </svg>
+              </span>
+            </h1>
 
-                const isCenter = relative === 0;
-                const isLeft = relative === -1;
-                const isRight = relative === 1;
+            <p className="mt-7 max-w-md text-sm leading-7 text-[#667260] sm:text-base sm:leading-8" style={{ fontFamily: content.hero.narrativeFontFamily || 'inherit' }}>
+              {content.hero.narrative}
+            </p>
 
-                if (!isCenter && !isLeft && !isRight) return null;
+            <div className="mt-8 flex flex-wrap items-center gap-3">
+              <Link to={content.hero.ctaPath} className="group inline-flex items-center gap-3 rounded-full bg-[#294B35] px-6 py-4 text-[10px] font-bold uppercase tracking-[0.13em] text-white shadow-lg shadow-[#294B35]/10 transition-all duration-300 hover:-translate-y-1 hover:bg-[#C77B3B] sm:px-7">
+                {content.hero.ctaText}
+                <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
+              </Link>
+              <Link to="/dashboard/home" className="inline-flex items-center gap-2 px-3 py-3 text-xs font-bold text-[#294B35] transition-colors hover:text-[#C77B3B]">
+                <RefreshCw className="h-3.5 w-3.5" /> Customize in Dashboard
+              </Link>
+            </div>
 
-                return (
-                  <div
-                    key={card.id || index}
-                    className={`absolute carousel-card ${isCenter ? 'animate-[floatCenter_7s_ease-in-out_infinite]' : ''}`}
-                    style={{
-                      transform: isCenter ? 'translateX(0%) scale(1.05) rotateY(0deg) translateZ(100px)' : isLeft ? 'translateX(-62%) scale(0.75) rotateY(22deg) translateZ(-30px)' : 'translateX(62%) scale(0.75) rotateY(-22deg) translateZ(-30px)',
-                      opacity: isCenter ? 1 : 0.55,
-                      zIndex: isCenter ? 40 : 10,
-                      filter: isCenter ? 'none' : 'brightness(0.92)',
-                      pointerEvents: isCenter ? 'auto' : 'none',
-                    }}
-                  >
-                    {isCenter && <div className="absolute inset-2 scale-110 bg-sky-400/20 blur-[70px] rounded-[32px] pointer-events-none animate-[pulseGlow_4s_ease-in-out_infinite]" />}
-                    <div className={`relative overflow-hidden rounded-[20px] transform-gpu w-[180px] sm:w-[220px] md:w-[260px] h-[260px] sm:h-[310px] md:h-[360px] bg-white border border-slate-200/80 shadow-[0_12px_32px_rgba(0,0,0,0.08)] group transition-all duration-700 ${isCenter ? 'shadow-[0_20px_45px_-8px_rgba(14,165,233,0.2)] border-sky-300/60' : ''}`}>
-                      <img src={card.image} alt={card.title} draggable={false} loading="lazy" className="w-full h-full object-cover transition-transform duration-[1600ms] ease-[cubic-bezier(0.25,1,0.5,1)] group-hover:scale-[1.08]" />
-                      <div className="absolute inset-0 bg-gradient-to-t from-slate-900/80 via-slate-900/30 to-transparent opacity-90" />
-                      <div className="absolute inset-0 bg-gradient-to-b from-sky-400/10 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-600" />
-                      
-                      <div className="absolute top-3.5 left-3.5 translate-y-2 opacity-0 group-hover:translate-y-0 group-hover:opacity-100 transition-all duration-500">
-                        <span className="px-2.5 py-1 rounded-full bg-white/90 backdrop-blur-md border border-slate-200/60 text-sky-600 text-[8px] sm:text-[9px] uppercase font-semibold tracking-[0.2em]" style={{ fontFamily: card.subtitleFontFamily || 'inherit' }}>
-                          {card.subtitle}
-                        </span>
-                      </div>
-                      <div className="absolute bottom-0 left-0 right-0 p-4 sm:p-5 translate-y-1 group-hover:translate-y-0 transition-transform duration-500">
-                        <h3 className="text-white text-lg sm:text-xl md:text-2xl font-extrabold tracking-tight" style={{ fontFamily: card.titleFontFamily || 'inherit' }}>{card.title}</h3>
-                        <p className="text-slate-200 text-[11px] sm:text-xs mt-1 mb-2.5 font-light leading-relaxed max-w-[180px] opacity-0 group-hover:opacity-100 transition-opacity duration-500 delay-75" style={{ fontFamily: card.descriptionFontFamily || 'inherit' }}>{card.description}</p>
-                        <Link to={card.path} onClick={(e) => { if (hasDragged.current) e.preventDefault(); }} className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-white text-slate-800 font-bold text-[8px] sm:text-[9px] uppercase tracking-[0.16em] transition-all duration-300 shadow-md hover:bg-sky-400 hover:text-white hover:scale-[1.03]">
-                          Explore
-                        </Link>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+            <div className="mt-9 flex flex-wrap items-center gap-x-5 gap-y-3 border-t border-[#294B35]/10 pt-6">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 text-[#71845E]" />
+                <span className="text-[10px] font-semibold text-[#667260] sm:text-xs">Quality-Focused Care</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Heart className="h-4 w-4 text-[#C77B3B]" />
+                <span className="text-[10px] font-semibold text-[#667260] sm:text-xs">For Every Backyard</span>
+              </div>
             </div>
           </div>
 
-          <div className="flex justify-center gap-2 mt-8 md:mt-10" role="tablist" aria-label="Carousel navigation">
-            {cards.map((_, index) => (
-              <button key={index} onClick={() => goTo(index)} aria-label={`Go to slide ${index + 1}`} aria-selected={activeIndex === index} role="tab" className={`transition-all duration-700 rounded-full h-1.5 cursor-pointer ${activeIndex === index ? 'w-7 bg-sky-500 shadow-[0_0_10px_rgba(56,189,248,0.4)]' : 'w-1.5 bg-slate-300 hover:bg-slate-400'}`} />
+          <div className="relative mx-auto w-full max-w-[580px] md:ml-auto">
+            <div className="absolute -inset-4 rotate-3 rounded-[2.5rem] border border-[#C77B3B]/25 sm:-inset-5" />
+            <div className="relative h-[360px] overflow-hidden rounded-[2rem] bg-[#D7C6A4] shadow-2xl shadow-[#294B35]/15 sm:h-[470px] md:h-[500px] lg:h-[560px]">
+              {content.hero.background?.source ? (
+                <img src={content.hero.background.source} alt="" className="h-full w-full object-cover" fetchPriority="high" />
+              ) : (
+                <div className="flex h-full items-center justify-center bg-[#E8E2D3] p-6 text-center text-sm text-[#75816B]">No hero image configured.</div>
+              )}
+              <div className="absolute inset-0 bg-gradient-to-t from-[#182B1E]/85 via-[#182B1E]/20 to-transparent" />
+
+              <div className="absolute left-5 top-5 flex items-center gap-2 rounded-2xl border border-white/40 bg-[#FAF8F0]/90 px-3 py-2.5 shadow-lg backdrop-blur-md sm:left-7 sm:top-7 sm:px-4 sm:py-3">
+                <RoosterLogo className="h-9 w-9" />
+                <div>
+                  <p className="font-serif text-sm font-black text-[#294B35]">EGB Backyard</p>
+                  <p className="mt-1 text-[8px] font-bold uppercase tracking-[0.15em] text-[#75816B]">Our little farm</p>
+                </div>
+              </div>
+
+              <div className="absolute bottom-0 left-0 right-0 p-6 sm:p-8">
+                <p className="text-[9px] font-bold uppercase tracking-[0.25em] text-[#E9BD75] sm:text-[10px]" style={{ fontFamily: content.hero.headingFontFamily || 'inherit' }}>
+                  {content.hero.heading}
+                </p>
+                <h2 className="mt-2 max-w-sm font-serif text-3xl font-bold leading-tight text-white sm:text-4xl">
+                  Growing your flock, one bird at a time.
+                </h2>
+              </div>
+            </div>
+
+            <div className="absolute -bottom-6 -left-2 flex h-24 w-24 -rotate-12 flex-col items-center justify-center rounded-full border-4 border-[#FAF8F0] bg-[#C77B3B] text-center text-white shadow-lg sm:-bottom-7 sm:-left-6 sm:h-28 sm:w-28">
+              <RoosterLogo className="h-8 w-8" light />
+              <span className="mt-0.5 text-[8px] font-bold uppercase tracking-[0.15em]">Backyard</span>
+              <span className="text-[8px] font-bold uppercase tracking-[0.15em]">Goodness</span>
+            </div>
+          </div>
+        </div>
+        <div className="h-2 bg-[#294B35]" />
+      </section>
+
+      {/* CATEGORY INTRODUCTION */}
+      <section id="categories" className="scroll-mt-24 bg-[#FAF8F0] px-5 py-16 sm:px-8 sm:py-20 lg:px-12 lg:py-24">
+        <div className="mx-auto max-w-7xl">
+          <div className="mb-10 flex flex-col justify-between gap-5 sm:mb-12 md:flex-row md:items-end">
+            <div>
+              <div className="mb-3 flex items-center gap-2">
+                <span className="h-px w-8 bg-[#C77B3B]" />
+                <span className="text-[10px] font-bold uppercase tracking-[0.25em] text-[#C77B3B]">{content.carousel.eyebrow}</span>
+              </div>
+              <h2 className="font-serif text-4xl font-black leading-tight tracking-[-0.045em] text-[#294B35] sm:text-5xl md:text-6xl">
+                {content.carousel.title}
+              </h2>
+            </div>
+            <div className="max-w-md">
+              <p className="text-sm leading-7 text-[#75816B]">
+                Explore our birds configured via the dashboard and discover which ones fit your home or farm needs.
+              </p>
+              <Link to="/shop" className="mt-3 inline-flex items-center gap-2 text-xs font-bold text-[#294B35] transition-colors hover:text-[#C77B3B]">
+                Browse the shop <ArrowRight className="h-4 w-4" />
+              </Link>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 lg:gap-6">
+            {categories.map((category, index) => (
+              <article key={category.id || index} className="group relative overflow-hidden rounded-[1.75rem] border border-[#294B35]/10 bg-white transition-all duration-500 hover:-translate-y-2 hover:shadow-xl hover:shadow-[#294B35]/10">
+                <Link to={category.path || '/shop'} aria-label={`Explore ${category.title}`} className="relative block h-[260px] overflow-hidden bg-[#E8E2D3] sm:h-[300px]">
+                  <img src={category.image} alt={category.title} loading="lazy" draggable={false} className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-105" />
+                  <div className="absolute inset-0 bg-gradient-to-t from-[#182B1E]/55 via-transparent to-transparent" />
+                  <span className="absolute left-4 top-4 rounded-full border border-white/40 bg-[#FAF8F0]/90 px-3 py-2 text-[8px] font-bold uppercase tracking-[0.17em] text-[#294B35] backdrop-blur-md sm:left-5 sm:top-5">
+                    {category.subtitle}
+                  </span>
+                  <span className="absolute bottom-4 right-4 flex h-11 w-11 items-center justify-center rounded-full bg-[#FAF8F0] text-[#294B35] shadow-md transition-all duration-300 group-hover:rotate-45 group-hover:bg-[#C77B3B] group-hover:text-white sm:bottom-5 sm:right-5">
+                    <ArrowUpRight className="h-5 w-5" />
+                  </span>
+                </Link>
+                <div className="p-5 sm:p-6">
+                  <span className="text-[9px] font-bold uppercase tracking-[0.19em] text-[#C77B3B]">Category 0{index + 1}</span>
+                  <h3 className="mt-1.5 font-serif text-2xl font-black tracking-tight text-[#294B35] sm:text-3xl" style={{ fontFamily: category.fontFamily || 'inherit' }}>
+                    {category.title}
+                  </h3>
+                  <p className="mt-3 min-h-[72px] text-sm leading-6 text-[#75816B]">{category.description}</p>
+                  <div className="mt-5 flex items-center justify-between gap-3 border-t border-[#294B35]/10 pt-4">
+                    <span className="text-[10px] font-semibold text-[#75816B]">Quality birds, honest prices</span>
+                    <Link to={category.path || '/shop'} className="inline-flex shrink-0 items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.1em] text-[#294B35] transition-colors hover:text-[#C77B3B]">
+                      Shop <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-1" />
+                    </Link>
+                  </div>
+                </div>
+              </article>
             ))}
           </div>
         </div>
       </section>
 
-      {/* --- STATS SECTION (light theme) --- */}
-      <section className="relative py-20 md:py-24 bg-white overflow-hidden border-t border-slate-200/60">
-        <div className="absolute left-1/2 top-0 -translate-x-1/2 w-[700px] h-[700px] bg-sky-300/10 blur-[140px] rounded-full pointer-events-none" />
-        <div className="relative z-10 max-w-6xl mx-auto px-6">
-          <div className="text-center mb-14 md:mb-16">
-            <span className="text-sky-500 uppercase tracking-[0.4em] text-[11px] font-bold block" style={{ fontFamily: statsConfig.eyebrowFontFamily || 'inherit' }}>
-              {statsConfig.eyebrow}
-            </span>
-            <h2 className="mt-2 text-slate-800 text-2xl sm:text-3xl md:text-4xl font-black tracking-tight" style={{ fontFamily: statsConfig.headingFontFamily || 'inherit' }}>
-              {statsConfig.heading}
-            </h2>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5 md:gap-6">
-            {statsConfig.items.map((stat, index) => (
-              <div key={index} className="group relative overflow-hidden rounded-2xl bg-white border border-slate-200/80 p-7 md:p-8 transition-all duration-500 hover:border-sky-300/60 hover:-translate-y-1 shadow-sm hover:shadow-md">
-                <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-600 bg-gradient-to-br from-sky-50 to-transparent pointer-events-none" />
-                <h3 className="relative text-3xl sm:text-4xl md:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-b from-slate-800 to-slate-500 tracking-tight" style={{ fontFamily: stat.numberFontFamily || 'inherit' }}>
-                  {stat.number}
-                </h3>
-                <div className="mt-4 w-6 h-[2px] bg-sky-400/60 transition-all duration-500 group-hover:w-12 group-hover:bg-sky-500" />
-                <p className="mt-3 text-slate-500 uppercase tracking-[0.2em] text-[10px] sm:text-[11px] font-medium transition-colors duration-300 group-hover:text-slate-600" style={{ fontFamily: stat.labelFontFamily || 'inherit' }}>
-                  {stat.label}
-                </p>
+      {/* FEATURED CATEGORY CAROUSEL */}
+      <section className="overflow-hidden bg-[#294B35] px-5 py-16 text-[#FAF8F0] sm:px-8 sm:py-20 lg:px-12 lg:py-24">
+        <div className="mx-auto max-w-7xl">
+          <div className="grid items-center gap-10 md:grid-cols-[0.8fr_1.2fr] md:gap-14">
+            <div>
+              <div className="mb-4 flex items-center gap-2">
+                <span className="h-px w-8 bg-[#E9BD75]" />
+                <span className="text-[10px] font-bold uppercase tracking-[0.25em] text-[#E9BD75]">{content.carousel.eyebrow}</span>
               </div>
+              <h2 className="font-serif text-4xl font-black leading-tight tracking-[-0.04em] sm:text-5xl md:text-6xl">
+                A bird for<br />every<br /><span className="text-[#E9BD75]">backyard.</span>
+              </h2>
+              <p className="mt-5 max-w-sm text-sm leading-7 text-[#E0E7D9]/80">
+                Managed from your dashboard database. Swipe or use controls to browse current selections.
+              </p>
+              <div className="mt-7 flex items-center gap-3">
+                <button type="button" onClick={goPrev} aria-label="Previous category" className="flex h-11 w-11 items-center justify-center rounded-full border border-white/25 text-white transition-all hover:border-[#E9BD75] hover:bg-[#E9BD75] hover:text-[#294B35]">
+                  <ChevronLeft className="h-5 w-5" />
+                </button>
+                <button type="button" onClick={goNext} aria-label="Next category" className="flex h-11 w-11 items-center justify-center rounded-full border border-white/25 text-white transition-all hover:border-[#E9BD75] hover:bg-[#E9BD75] hover:text-[#294B35]">
+                  <ChevronRight className="h-5 w-5" />
+                </button>
+                <span className="ml-2 text-xs font-semibold tracking-widest text-[#E0E7D9]/70">
+                  {String(activeIndex + 1).padStart(2, '0')} <span className="mx-2 text-[#E9BD75]">/</span> {String(totalCards).padStart(2, '0')}
+                </span>
+              </div>
+              <div className="mt-5 flex gap-2">
+                {categories.map((category, index) => (
+                  <button key={category.id || index} type="button" onClick={() => goTo(index)} aria-label={`Show ${category.title}`} aria-pressed={activeIndex === index} className={`h-1.5 rounded-full transition-all duration-300 ${activeIndex === index ? 'w-10 bg-[#E9BD75]' : 'w-3 bg-white/25 hover:bg-white/50'}`} />
+                ))}
+              </div>
+            </div>
+
+            <div className="relative mx-auto w-full max-w-xl select-none" onMouseEnter={() => setIsHovering(true)} onMouseLeave={() => setIsHovering(false)} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={handlePointerCancel} onKeyDown={handleKeyDown} role="region" aria-roledescription="carousel" aria-label="Featured poultry categories" tabIndex={0} style={{ touchAction: 'pan-y' }}>
+              <div className="relative h-[400px] sm:h-[470px]">
+                {categories.map((category, index) => {
+                  const relative = (index - activeIndex + totalCards) % totalCards;
+                  const isActive = relative === 0;
+                  const isNext = relative === 1;
+                  const isPrevious = relative === totalCards - 1;
+                  if (!isActive && !isNext && !isPrevious) return null;
+                  const translate = isActive ? 'translateX(0%) scale(1)' : isNext ? 'translateX(55%) scale(0.76)' : 'translateX(-55%) scale(0.76)';
+                  return (
+                    <div key={category.id || index} className="absolute inset-0 flex items-center justify-center transition-all duration-500 ease-out" style={{ transform: translate, opacity: isActive ? 1 : 0.38, zIndex: isActive ? 20 : 10, pointerEvents: isActive ? 'auto' : 'none' }}>
+                      <article className={`relative h-[360px] w-[78%] max-w-[390px] overflow-hidden rounded-[1.75rem] border border-white/20 bg-[#F0EBDD] shadow-2xl shadow-black/20 sm:h-[420px] ${isActive ? 'cursor-grab active:cursor-grabbing' : ''}`}>
+                        <img src={category.image} alt={category.title} draggable={false} loading="lazy" className="h-full w-full object-cover" />
+                        <div className="absolute inset-0 bg-gradient-to-t from-[#15261A]/95 via-[#15261A]/30 to-transparent" />
+                        <div className="absolute bottom-0 left-0 right-0 p-5 sm:p-7">
+                          <span className="text-[9px] font-bold uppercase tracking-[0.23em] text-[#E9BD75]">{category.subtitle}</span>
+                          <h3 className="mt-2 font-serif text-3xl font-black text-white sm:text-4xl" style={{ fontFamily: category.fontFamily || 'inherit' }}>{category.title}</h3>
+                          <p className="mt-2 line-clamp-3 text-xs leading-6 text-white/90 sm:text-sm">{category.description}</p>
+                          <Link to={category.path || '/shop'} onClick={(e) => { if (hasDragged.current) e.preventDefault(); }} className="mt-5 inline-flex items-center gap-2 rounded-full bg-[#FAF8F0] px-5 py-3 text-[9px] font-bold uppercase tracking-[0.15em] text-[#294B35] transition-colors hover:bg-[#E9BD75]">
+                            Explore Category <ArrowRight className="h-3.5 w-3.5" />
+                          </Link>
+                        </div>
+                      </article>
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="mt-2 text-center text-[9px] font-medium uppercase tracking-[0.18em] text-white/50">Swipe or use the arrows to explore</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* STATS & DIFFERENCE SECTION */}
+      <section className="bg-[#FAF8F0] px-5 py-16 sm:px-8 sm:py-20 lg:px-12 lg:py-24">
+        <div className="mx-auto max-w-7xl">
+          <div className="mx-auto mb-12 max-w-2xl text-center">
+            <div className="mb-4 flex items-center justify-center gap-2">
+              <span className="h-px w-8 bg-[#C77B3B]" />
+              <span className="text-[10px] font-bold uppercase tracking-[0.24em] text-[#C77B3B]">{content.stats.eyebrow}</span>
+              <span className="h-px w-8 bg-[#C77B3B]" />
+            </div>
+            <h2 className="font-serif text-3xl font-black tracking-tight text-[#294B35] sm:text-4xl md:text-5xl">
+              {content.stats.heading}
+            </h2>
+            <p className="mt-4 text-sm leading-7 text-[#75816B]">Values configured live through your dashboard content manager.</p>
+          </div>
+
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-3 sm:gap-6">
+            {(content.stats.items || []).map((stat, index) => (
+              <article key={index} className="group rounded-[1.5rem] border border-[#294B35]/10 bg-white p-6 transition-all duration-300 hover:-translate-y-1 hover:border-[#C77B3B]/40 hover:shadow-lg hover:shadow-[#294B35]/5 sm:p-8">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#E8EBDD] text-[#426044] transition-colors duration-300 group-hover:bg-[#294B35] group-hover:text-white font-serif font-black text-lg">
+                  {stat.number || `0${index + 1}`}
+                </div>
+                <span className="mt-6 block text-[9px] font-bold uppercase tracking-[0.2em] text-[#C77B3B]">Metric Value</span>
+                <p className="mt-3 text-sm leading-7 text-[#75816B]">{stat.label}</p>
+              </article>
             ))}
           </div>
         </div>
       </section>
-    </div>
+
+      {/* CALL TO ACTION */}
+      <section className="px-5 pb-16 sm:px-8 sm:pb-20 lg:px-12 lg:pb-24">
+        <div className="relative mx-auto max-w-7xl overflow-hidden rounded-[2rem] bg-[#C77B3B] px-6 py-12 text-center sm:px-12 sm:py-16 md:py-20">
+          <div className="pointer-events-none absolute -right-16 -top-24 h-64 w-64 rounded-full border border-white/15 sm:h-80 sm:w-80" />
+          <div className="pointer-events-none absolute -bottom-36 -left-16 h-72 w-72 rounded-full border border-white/15 sm:h-96 sm:w-96" />
+
+          <div className="relative z-10 mx-auto max-w-2xl">
+            <RoosterLogo className="mx-auto h-16 w-16" light />
+            <span className="mt-4 block text-[10px] font-bold uppercase tracking-[0.25em] text-white/80">Your Backyard Journey Starts Here</span>
+            <h2 className="mt-4 font-serif text-4xl font-black leading-tight tracking-[-0.04em] text-white sm:text-5xl md:text-6xl">
+              Ready to find<br />your next flock?
+            </h2>
+            <p className="mx-auto mt-5 max-w-lg text-sm leading-7 text-white/85 sm:text-base">
+              From roasters to hens and baby chickens, explore EGB Backyard and find the birds you have been looking for.
+            </p>
+            <div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
+              <Link to="/shop" className="group inline-flex items-center justify-center gap-2 rounded-full bg-[#FAF8F0] px-7 py-4 text-[10px] font-bold uppercase tracking-[0.13em] text-[#294B35] transition-all hover:-translate-y-0.5 hover:bg-white">
+                Shop Our Birds <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
+              </Link>
+              <Link to="/dashboard/home" className="inline-flex items-center justify-center gap-2 rounded-full border border-white/40 px-7 py-4 text-[10px] font-bold uppercase tracking-[0.13em] text-white transition-colors hover:bg-white/10">
+                Dashboard Customizer <ArrowUpRight className="h-4 w-4" />
+              </Link>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* BUSINESS CONTACT & SOCIAL LINKS */}
+      <section className="bg-[#F0EBDD] px-5 py-14 sm:px-8 sm:py-16 lg:px-12" aria-labelledby="business-contact-heading">
+        <div className="mx-auto max-w-7xl">
+          <div className="mb-7 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-[#C77B3B]">Stay connected</p>
+              <h2 id="business-contact-heading" className="mt-2 font-serif text-3xl font-black text-[#294B35] sm:text-4xl">Contact EGB Backyard</h2>
+              <p className="mt-2 max-w-xl text-sm leading-6 text-[#75816B]">Use the business contact details and social platforms configured by the administrator.</p>
+            </div>
+            <div className="flex gap-2">
+              <a href="#business-contact-heading" onClick={(e) => { const el = e.currentTarget.closest('section')?.querySelector('[data-contact-track]'); if (el) el.scrollBy({ left: -280, behavior: 'smooth' }); else e.preventDefault(); }} aria-label="Previous contact links" className="flex h-10 w-10 items-center justify-center rounded-full border border-[#294B35]/20 bg-white text-[#294B35] hover:bg-[#294B35] hover:text-white">‹</a>
+              <a href="#business-contact-heading" onClick={(e) => { const el = e.currentTarget.closest('section')?.querySelector('[data-contact-track]'); if (el) el.scrollBy({ left: 280, behavior: 'smooth' }); else e.preventDefault(); }} aria-label="Next contact links" className="flex h-10 w-10 items-center justify-center rounded-full border border-[#294B35]/20 bg-white text-[#294B35] hover:bg-[#294B35] hover:text-white">›</a>
+            </div>
+          </div>
+          <div data-contact-track className="flex snap-x snap-mandatory gap-4 overflow-x-auto pb-3">
+            {[
+              { label: 'Phone', value: content.contacts?.phone, href: content.contacts?.phone ? `tel:${content.contacts.phone.replace(/\s+/g, '')}` : '', detail: 'Call our business' },
+              { label: 'Email', value: content.contacts?.email, href: content.contacts?.email ? `mailto:${content.contacts.email}` : '', detail: 'Send us a message' },
+              { label: 'Visit Us', value: content.contacts?.address, href: '', detail: 'Business location' },
+              { label: 'Facebook', value: content.contacts?.facebook, href: content.contacts?.facebook || '', detail: 'Follow our updates' },
+              { label: 'Instagram', value: content.contacts?.instagram, href: content.contacts?.instagram || '', detail: 'See our photos' },
+              { label: 'TikTok', value: content.contacts?.tiktok, href: content.contacts?.tiktok || '', detail: 'Watch our videos' },
+              { label: 'Messenger', value: content.contacts?.messenger, href: content.contacts?.messenger || '', detail: 'Chat with us' },
+            ].filter((item) => Boolean(item.value)).map((item) => {
+              const external = /^https?:\/\//i.test(item.href);
+              const card = (
+                <div className="h-full min-h-36 rounded-2xl border border-[#294B35]/10 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
+                  <span className="text-[9px] font-extrabold uppercase tracking-[0.2em] text-[#C77B3B]">{item.label}</span>
+                  <p className="mt-3 break-words text-sm font-bold text-[#294B35]">{item.value}</p>
+                  <p className="mt-2 text-xs text-[#75816B]">{item.detail}</p>
+                </div>
+              );
+              return item.href ? <a key={item.label} href={item.href} target={external ? '_blank' : undefined} rel={external ? 'noopener noreferrer' : undefined} className="min-w-[230px] max-w-[280px] flex-1 snap-start">{card}</a> : <div key={item.label} className="min-w-[230px] max-w-[280px] flex-1 snap-start">{card}</div>;
+            })}
+            {!['phone','email','address','facebook','instagram','tiktok','messenger'].some((key) => Boolean((content.contacts as any)?.[key])) && (
+              <div className="w-full rounded-2xl border border-dashed border-[#294B35]/20 bg-white/70 p-6 text-sm text-[#75816B]">Business contact and social links have not been configured in the dashboard yet.</div>
+            )}
+          </div>
+        </div>
+      </section>
+
+      {/* FOOTER */}
+      <footer className="bg-[#203B2A] px-5 pb-8 pt-12 text-[#FAF8F0] sm:px-8 sm:pt-14 lg:px-12">
+        <div className="mx-auto max-w-7xl">
+          <div className="grid grid-cols-1 gap-10 border-b border-white/15 pb-10 sm:grid-cols-2 lg:grid-cols-[1.4fr_0.7fr_0.9fr] lg:gap-16">
+            <div>
+              <Link to="/" className="inline-flex items-center gap-3" aria-label="EGB Backyard home">
+                <RoosterLogo className="h-14 w-14" light />
+                <div>
+                  <p className="font-serif text-2xl font-black tracking-tight text-white">EGB Backyard</p>
+                  <p className="mt-1 text-[9px] font-semibold uppercase tracking-[0.2em] text-[#E9BD75]">Poultry & Backyard Living</p>
+                </div>
+              </Link>
+              <p className="mt-5 max-w-sm text-sm leading-7 text-white/60">
+                Your neighborhood poultry shop for roasters, hens, and baby or small chickens. Helping backyard flocks grow, one bird at a time.
+              </p>
+              <div className="mt-5 flex items-center gap-2 text-xs font-medium text-white/75">
+                <Leaf className="h-4 w-4 text-[#E9BD75]" /> Good Birds. Honest Care. Backyard Roots.
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#E9BD75]">Quick Links</h3>
+              <nav className="mt-5 flex flex-col items-start gap-3.5">
+                <Link to="/" className="text-sm text-white/70 transition-colors hover:text-white">Home</Link>
+                <Link to="/shop" className="text-sm text-white/70 transition-colors hover:text-white">Shop All</Link>
+                <Link to="/dashboard/home" className="text-sm text-[#E9BD75] transition-colors hover:text-white">Homepage Dashboard</Link>
+                <a href="#categories" className="text-sm text-white/70 transition-colors hover:text-white">Our Categories</a>
+              </nav>
+            </div>
+
+            <div>
+              <h3 className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#E9BD75]">Visit Our Backyard</h3>
+              <p className="mt-5 text-sm leading-7 text-white/70">Your Local Poultry Shop</p>
+              <p className="mt-2 text-sm leading-7 text-white/70">Contact us via Dashboard or Shop</p>
+              <Link to="/shop" className="mt-5 inline-flex items-center gap-2 text-xs font-bold text-[#E9BD75] transition-colors hover:text-white">
+                Browse Available Birds <ArrowRight className="h-4 w-4" />
+              </Link>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-3 pt-6 text-[10px] text-white/45 sm:flex-row sm:items-center sm:justify-between">
+            <p>© {new Date().getFullYear()} EGB Backyard. All rights reserved.</p>
+            <p className="flex items-center gap-1.5">
+              Made with <Heart className="h-3 w-3 fill-[#C77B3B] text-[#C77B3B]" /> for every backyard flock.
+            </p>
+          </div>
+        </div>
+      </footer>
+    </main>
   );
 };
 

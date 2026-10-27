@@ -1,65 +1,81 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { useCart } from '../context/CartContext';
-import { useAuth } from '../context/AuthContext';
-import { Sparkles } from 'lucide-react';
+// src/pages/CartPage.tsx
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { ArrowRight, ShoppingBag, Sparkles, Trash2 } from "lucide-react";
+import { useCart } from "../context/CartContext";
+import { useAuth } from "../context/AuthContext";
+import api, { apiErrorMessage } from "../services/api";
+import {
+  calculateCheckoutPricing,
+  formatPHP,
+} from "../utils/checkoutPricing";
 
-const formatPHP = (value: number): string => {
-  return new Intl.NumberFormat('en-PH', {
-    style: 'currency',
-    currency: 'PHP',
-  }).format(value);
-};
-
-// 🔥 DYNAMIC PERMANENT FIX for Events (Cleaned single slash)
-const getApiBaseUrl = () => {
-  return `https://cc-backend-yc-team.onrender.com/api/v1`;
-};
-
-const API_BASE_URL = getApiBaseUrl();
-
-// 🛠️ Helper function to safely pull error messages from FastAPI responses
-const extractErrorMessage = (data: any, fallback: string): string => {
-  if (!data) return fallback;
-  if (typeof data === 'string') return data;
-  if (typeof data.detail === 'string') return data.detail;
-  if (Array.isArray(data.detail)) {
-    return data.detail.map((err: any) => err.msg || JSON.stringify(err)).join(', ');
-  }
-  if (typeof data.message === 'string') return data.message;
-  if (typeof data.error === 'string') return data.error;
-  return fallback;
-};
-
-const parseResponse = async (response: Response) => {
-  const text = await response.text();
-  try {
-    return text ? JSON.parse(text) : {};
-  } catch {
-    return { detail: text || `Server error (Status ${response.status})` };
-  }
-};
+const FALLBACK_IMAGE =
+  "https://placehold.co/600x600/f3efe3/36543a?text=EGB+Backyard";
 
 interface EventItem {
   id?: string;
   _id?: string;
   title: string;
-  description: string;
-  event_type: string;
+  description?: string;
+  event_type?: string;
   discount_amount: number;
   start_date?: string;
   end_date?: string;
   status: string;
-  is_featured: boolean;
+  is_featured?: boolean;
+}
+
+function normalizeImageValue(value: unknown): string[] {
+  if (typeof value === "string") {
+    const image = value.trim();
+    return image ? [image] : [];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap(normalizeImageValue);
+  }
+  if (value && typeof value === "object") {
+    const imageObject = value as Record<string, unknown>;
+    for (const key of ["url", "src", "image", "imageUrl", "image_url", "path"]) {
+      const images = normalizeImageValue(imageObject[key]);
+      if (images.length) return images;
+    }
+  }
+  return [];
+}
+
+function getCartItemImage(item: any): string {
+  const candidates = [
+    item?.image,
+    item?.imageUrl,
+    item?.image_url,
+    item?.img,
+    item?.images,
+    item?.thumbnail,
+    item?.product_image,
+    item?.productImage,
+    item?.product?.image,
+    item?.product?.imageUrl,
+    item?.product?.image_url,
+    item?.product?.images,
+  ];
+
+  for (const candidate of candidates) {
+    const images = normalizeImageValue(candidate);
+    if (images.length) return images[0];
+  }
+  return "";
 }
 
 const CartPage: React.FC = () => {
-  const { 
-    cartItems, 
-    updateQuantity, 
-    removeFromCart, 
-    clearCart, 
-    cartSubtotal,
+  const cart = useCart() as any;
+
+  const {
+    cartItems = [],
+    updateQuantity,
+    removeFromCart,
+    clearCart,
+    cartSubtotal = 0,
     appliedCoupon,
     couponInput,
     setCouponInput,
@@ -69,356 +85,470 @@ const CartPage: React.FC = () => {
     handleApplyCoupon,
     handleRemoveCoupon,
     taxRate,
-    refreshCoupons 
-  } = useCart() as any;
-  
-  const { user } = useAuth();
+    refreshCoupons,
+  } = cart;
+
+  const { isAuthenticated } = useAuth();
   const navigate = useNavigate();
-  const [isMounted, setIsMounted] = useState(false);
+
   const [activeEvents, setActiveEvents] = useState<EventItem[]>([]);
+  const [eventsError, setEventsError] = useState("");
+  const [isLoadingEvents, setIsLoadingEvents] = useState(false);
 
   const fetchActiveEvents = useCallback(async () => {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    setIsLoadingEvents(true);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/events`, {
-        method: 'GET',
-        signal: controller.signal,
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-      clearTimeout(timeoutId);
+      const response = await api.get("/api/v1/events");
+      const data = response.data;
 
-      const data = await parseResponse(response);
+      const list: EventItem[] = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.events)
+          ? data.events
+          : Array.isArray(data?.data)
+            ? data.data
+            : [];
 
-      if (!response.ok) {
-        const msg = extractErrorMessage(data, `Failed to fetch events (${response.status})`);
-        console.error('[CartPage] Events error:', msg);
-        return;
-      }
+      const now = Date.now();
 
-      const eventsArray = Array.isArray(data) ? data : (data.events || data.data || []);
-      const now = new Date();
+      setActiveEvents(
+        list.filter((event) => {
+          if (event.status?.toLowerCase() !== "active") return false;
+          if (event.start_date) {
+            const start = new Date(event.start_date).getTime();
+            if (Number.isFinite(start) && start > now) return false;
+          }
+          if (event.end_date) {
+            const end = new Date(event.end_date).getTime();
+            if (Number.isFinite(end) && end < now) return false;
+          }
+          return true;
+        })
+      );
 
-      const active = eventsArray.filter((ev: EventItem) => {
-        const isActiveStatus = ev.status && ev.status.toLowerCase() === 'active';
-        let isNotExpired = true;
-        if (ev.end_date) {
-          const endDate = new Date(ev.end_date);
-          isNotExpired = endDate >= now;
-        }
-        return isActiveStatus && isNotExpired;
-      });
-
-      setActiveEvents(active);
-    } catch (err: any) {
-      if (err.name === 'AbortError') {
-        console.warn('[CartPage] Events request timed out.');
-      } else {
-        console.error('[CartPage] Failed to fetch active events:', err);
-      }
+      setEventsError("");
+    } catch (error) {
+      setEventsError(apiErrorMessage(error, "Unable to load promotions."));
+      setActiveEvents([]);
+    } finally {
+      setIsLoadingEvents(false);
     }
   }, []);
 
   useEffect(() => {
-    setIsMounted(true);
-    if (typeof refreshCoupons === 'function') {
-      refreshCoupons();
+    void fetchActiveEvents();
+    if (typeof refreshCoupons === "function") {
+      void Promise.resolve(refreshCoupons()).catch(() => undefined);
     }
-    fetchActiveEvents();
   }, [fetchActiveEvents, refreshCoupons]);
 
-  const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      handleApplyCoupon();
+  const eventDiscountTotal = useMemo(
+    () =>
+      activeEvents.reduce(
+        (sum, event) => sum + Math.max(0, Number(event.discount_amount) || 0),
+        0
+      ),
+    [activeEvents]
+  );
+
+  const pricing = useMemo(
+    () =>
+      calculateCheckoutPricing({
+        subtotal: Number(cartSubtotal) || 0,
+        eventDiscountTotal,
+        coupon: appliedCoupon,
+        taxRate,
+        shipping: 0,
+      }),
+    [cartSubtotal, eventDiscountTotal, appliedCoupon, taxRate]
+  );
+
+  const handleCouponKeyDown = (
+    event: React.KeyboardEvent<HTMLInputElement>
+  ) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void handleApplyCoupon();
     }
   };
 
-  // --- UNIFIED CALCULATIONS ---
-  const taxPercentageLabel = Math.round(taxRate ? (taxRate <= 1 ? taxRate * 100 : taxRate) : 8);
-  const effectiveTaxRate = taxRate ? (taxRate > 1 ? taxRate / 100 : taxRate) : 0.08;
-  
-  const eventDiscountTotal = activeEvents.reduce((acc, ev) => acc + (Number(ev.discount_amount) || 0), 0);
-
-  let couponDiscountAmount = 0;
-  if (appliedCoupon) {
-    if (appliedCoupon.type === 'percent') {
-      couponDiscountAmount = (cartSubtotal * appliedCoupon.discount) / 100;
-      if (appliedCoupon.maxDiscount && couponDiscountAmount > appliedCoupon.maxDiscount) {
-        couponDiscountAmount = appliedCoupon.maxDiscount;
-      }
-    } else {
-      couponDiscountAmount = appliedCoupon.discount;
-    }
-  }
-
-  const netSubtotal = Math.max(0, cartSubtotal - eventDiscountTotal - couponDiscountAmount);
-  
-  // Shipping strictly free nationwide
-  const shipping = 0;
-
-  // Tax calculated on net subtotal
-  const tax = netSubtotal * effectiveTaxRate;
-  const total = netSubtotal + shipping + tax;
-
-  const handleProceedToCheckout = () => {
-    // Pass pre-calculated totals to checkout to avoid tax duplication
-    navigate('/checkout', {
+  const proceedToCheckout = () => {
+    if (!cartItems.length) return;
+    navigate("/checkout", {
       state: {
-        summary: {
-          subtotal: cartSubtotal,
-          eventDiscountTotal,
-          couponDiscountAmount,
-          netSubtotal,
-          shipping,
-          tax,
-          total,
-          taxPercentageLabel
-        }
-      }
+        summary: pricing,
+      },
     });
   };
 
   return (
-    <div className="min-h-screen bg-white text-slate-900 pt-24 pb-24 px-4 sm:px-8 lg:px-12 font-sans selection:bg-slate-900 selection:text-white">
-      <div className={`max-w-7xl mx-auto transition-all duration-1000 ease-out transform ${isMounted ? 'translate-y-0 opacity-100' : 'translate-y-8 opacity-0'}`}>
-        
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-end border-b border-slate-200 pb-8 mb-10 md:mb-16 gap-6">
+    <main className="min-h-screen bg-stone-50 px-4 pb-20 pt-24 text-stone-900 sm:px-6 lg:px-10">
+      <div className="mx-auto max-w-7xl">
+        <header className="mb-10 flex flex-col gap-5 border-b border-stone-200 pb-8 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <p className="text-slate-500 text-[10px] tracking-[0.3em] font-semibold uppercase mb-2">Secure Checkout</p>
-            <h1 className="text-4xl sm:text-5xl md:text-6xl font-extrabold tracking-tight text-slate-900">Your Selection</h1>
-            <p className="text-slate-500 mt-3 max-w-md text-sm sm:text-base font-light">Curated pieces from the archive. Ready for verification.</p>
-          </div>
-          
-          <Link 
-            to="/shop" 
-            className="group flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-600 hover:text-slate-900 transition-all duration-300"
-          >
-            <svg className="w-4 h-4 transform group-hover:-translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-            </svg>
-            Continue Curating
-          </Link>
-        </div>
+            <p className="mb-3 text-xs font-bold uppercase tracking-[0.24em] text-emerald-800">
+              EGB Backyard / Your Basket
+            </p>
 
-        {cartItems.length === 0 ? (
-          <div className="py-24 sm:py-32 flex flex-col items-center justify-center text-center border border-slate-200 bg-slate-50 rounded-3xl">
-            <div className="w-20 h-20 sm:w-24 sm:h-24 mb-8 border border-slate-200 rounded-2xl flex items-center justify-center text-slate-400 bg-white shadow-xs">
-              <svg className="w-8 h-8 sm:w-10 sm:h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
-              </svg>
-            </div>
-            <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-slate-900 mb-3">Your archive is empty.</h2>
-            <p className="text-slate-500 text-sm sm:text-base max-w-xs font-light tracking-wide mb-10">Begin your journey through our signature worlds.</p>
-            
-            <Link 
-              to="/shop"
-              className="group px-8 sm:px-12 py-4 bg-slate-900 hover:bg-slate-800 text-white text-xs sm:text-sm font-bold uppercase tracking-[0.15em] transition-all duration-300 flex items-center gap-4 rounded-full shadow-sm"
-            >
-              EXPLORE THE ARCHIVE
-              <span className="group-hover:translate-x-1 transition-transform">→</span>
-            </Link>
+            <h1 className="text-4xl font-black tracking-tight sm:text-5xl">
+              Your Cart
+            </h1>
+
+            <p className="mt-3 max-w-lg text-sm leading-6 text-stone-600">
+              Review your selected poultry products before confirming delivery.
+            </p>
           </div>
+
+          <Link
+            to="/shop"
+            className="inline-flex min-h-11 items-center gap-2 self-start rounded-full border border-stone-300 px-5 text-sm font-semibold transition hover:bg-white sm:self-auto"
+          >
+            Continue shopping <ArrowRight size={16} />
+          </Link>
+        </header>
+
+        {!cartItems.length ? (
+          <section className="rounded-3xl border border-stone-200 bg-white px-6 py-20 text-center shadow-sm">
+            <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-800">
+              <ShoppingBag size={30} />
+            </div>
+
+            <h2 className="text-2xl font-bold">Your cart is empty</h2>
+
+            <p className="mx-auto mt-2 max-w-sm text-sm leading-6 text-stone-500">
+              Browse the backyard collection and add products to your basket.
+            </p>
+
+            <Link
+              to="/shop"
+              className="mt-7 inline-flex min-h-12 items-center justify-center rounded-xl bg-emerald-800 px-7 text-sm font-bold text-white transition hover:bg-emerald-900"
+            >
+              Explore the shop
+            </Link>
+          </section>
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-16">
-            
-            {/* Left Column: Cart Items */}
-            <div className="lg:col-span-7 xl:col-span-8 space-y-8">
-              <div className="flex justify-between items-center text-xs uppercase tracking-[0.15em] text-slate-500 border-b border-slate-200 pb-4">
-                <span className="font-semibold text-slate-900">ITEMS • {cartItems.length}</span>
-                <button 
+          <div className="grid grid-cols-1 items-start gap-8 lg:grid-cols-[minmax(0,1fr)_380px]">
+            <section className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm sm:p-7">
+              <div className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-stone-100 pb-5">
+                <div>
+                  <h2 className="text-lg font-bold">Basket items</h2>
+
+                  <p className="mt-1 text-sm text-stone-500">
+                    {cartItems.length} product
+                    {cartItems.length === 1 ? "" : "s"}
+                  </p>
+                </div>
+
+                <button
+                  type="button"
                   onClick={clearCart}
-                  className="flex items-center gap-1.5 text-slate-500 hover:text-rose-600 transition-colors font-semibold cursor-pointer"
+                  className="inline-flex min-h-10 items-center gap-2 rounded-lg px-3 text-sm font-semibold text-rose-700 transition hover:bg-rose-50"
                 >
-                  <span>✕</span> CLEAR ALL
+                  <Trash2 size={16} /> Clear cart
                 </button>
               </div>
 
-              {cartItems.map((item: any) => (
-                <div 
-                  key={item.id || item._id} 
-                  className="group flex flex-col sm:flex-row gap-6 sm:gap-8 border-b border-slate-100 pb-8 last:border-none last:pb-0"
-                >
-                  <div className="w-full sm:w-36 md:w-40 h-72 sm:h-48 md:h-52 bg-slate-100 flex-shrink-0 overflow-hidden relative rounded-xl border border-slate-200">
-                    <img 
-                      src={item.image || item.imageUrl} 
-                      alt={item.name} 
-                      className="w-full h-full object-cover opacity-95 group-hover:opacity-100 group-hover:scale-105 transition-all duration-700 ease-in-out" 
-                    />
-                  </div>
-                  
-                  <div className="flex-1 flex flex-col justify-between">
-                    <div className="flex flex-col sm:flex-row justify-between items-start gap-4 sm:gap-0">
-                      <div className="flex-1 pr-4">
-                        <p className="text-slate-500 text-[10px] tracking-[0.2em] font-semibold uppercase mb-1.5">{item.category || 'General'}</p>
-                        <h3 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 leading-tight">{item.name}</h3>
-                        {item.variant && (
-                          <p className="text-slate-500 mt-2 text-xs sm:text-sm font-light">{item.variant}</p>
-                        )}
-                      </div>
-                      <div className="text-left sm:text-right">
-                        <p className="text-xl sm:text-2xl font-light text-slate-900">{formatPHP(item.price)}</p>
-                        <p className="text-[10px] text-slate-500 mt-1 uppercase tracking-widest font-semibold">PER UNIT</p>
-                      </div>
-                    </div>
+              <div className="space-y-6">
+                {cartItems.map((item: any, index: number) => {
+                  const id = item.id ?? item._id ?? item.product_id;
+                  const itemImage = getCartItemImage(item);
+                  const itemKey = String(id ?? `cart-item-${index}`);
+                  const quantity = Number(item.quantity) || 0;
+                  const price = Number(item.price) || 0;
 
-                    <div className="mt-6 sm:mt-auto flex justify-between items-center sm:items-end pt-4 sm:pt-8">
-                      <div className="flex items-center border border-slate-200 bg-white rounded-lg overflow-hidden h-10 sm:h-12 shadow-xs">
-                        <button 
-                          onClick={() => updateQuantity(item.id || item._id, -1)} 
-                          className="px-4 sm:px-5 h-full text-lg sm:text-xl font-light hover:bg-slate-50 text-slate-900 transition-colors disabled:opacity-30 cursor-pointer"
-                          disabled={item.quantity <= 1}
-                        >
-                          −
-                        </button>
-                        <span className="px-4 sm:px-6 h-full flex items-center justify-center text-sm sm:text-base font-medium tabular-nums border-x border-slate-200 text-slate-900">
-                          {item.quantity}
-                        </span>
-                        <button 
-                          onClick={() => updateQuantity(item.id || item._id, 1)} 
-                          className="px-4 sm:px-5 h-full text-lg sm:text-xl font-light hover:bg-slate-50 text-slate-900 transition-colors cursor-pointer"
-                        >
-                          +
-                        </button>
+                  return (
+                    <article
+                      key={itemKey}
+                      className="flex flex-col gap-4 border-b border-stone-100 pb-6 last:border-0 last:pb-0 sm:flex-row"
+                    >
+                      <div className="flex h-44 w-full shrink-0 items-center justify-center overflow-hidden rounded-xl bg-stone-100 sm:h-32 sm:w-36">
+                        <img
+                          src={itemImage || FALLBACK_IMAGE}
+                          alt={item.name || "Cart product"}
+                          loading="lazy"
+                          decoding="async"
+                          className="h-full w-full object-cover"
+                          onError={(event) => {
+                            const image = event.currentTarget;
+                            if (image.dataset.fallbackApplied === "true") {
+                              image.style.visibility = "hidden";
+                              return;
+                            }
+                            image.dataset.fallbackApplied = "true";
+                            image.src = FALLBACK_IMAGE;
+                          }}
+                        />
                       </div>
 
-                      <div className="text-right flex flex-col items-end">
-                        <p className="text-lg sm:text-xl font-medium text-slate-900 mb-2 hidden sm:block">
-                          {formatPHP(item.price * item.quantity)}
-                        </p>
-                        <button 
-                          onClick={() => removeFromCart(item.id || item._id)}
-                          className="text-[10px] sm:text-xs uppercase tracking-widest font-semibold text-slate-500 hover:text-rose-600 underline underline-offset-4 transition-colors cursor-pointer"
-                        >
-                          Remove Item
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
+                      <div className="flex min-w-0 flex-1 flex-col justify-between gap-4">
+                        <div className="flex flex-wrap justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-xs font-bold uppercase tracking-wider text-emerald-800">
+                              {item.category || "Backyard collection"}
+                            </p>
 
-            {/* Right Column: Order Summary */}
-            <div className="lg:col-span-5 xl:col-span-4 mt-8 lg:mt-0">
-              <div className="bg-slate-50 border border-slate-200 p-6 sm:p-8 sticky top-28 rounded-2xl shadow-xs space-y-6">
-                <h3 className="text-xs uppercase tracking-[0.2em] font-bold text-slate-900">Order Summary</h3>
-                
+                            <h3 className="mt-1 break-words text-lg font-bold">
+                              {item.name || "Farm product"}
+                            </h3>
+
+                            {item.variant && (
+                              <p className="mt-1 text-sm text-stone-500">
+                                {item.variant}
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="sm:text-right">
+                            <p className="font-bold">{formatPHP(price)}</p>
+                            <p className="mt-1 text-xs text-stone-500">
+                              Per unit
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center justify-between gap-4">
+                          <div className="inline-flex h-10 items-center overflow-hidden rounded-lg border border-stone-200">
+                            <button
+                              type="button"
+                              aria-label={`Decrease quantity of ${item.name || "product"}`}
+                              disabled={quantity <= 1}
+                              onClick={() => updateQuantity(id, -1)}
+                              className="h-full w-10 text-lg transition hover:bg-stone-100 disabled:opacity-30"
+                            >
+                              −
+                            </button>
+
+                            <span className="min-w-10 text-center text-sm font-semibold">
+                              {quantity}
+                            </span>
+
+                            <button
+                              type="button"
+                              aria-label={`Increase quantity of ${item.name || "product"}`}
+                              onClick={() => updateQuantity(id, 1)}
+                              className="h-full w-10 text-lg transition hover:bg-stone-100"
+                            >
+                              +
+                            </button>
+                          </div>
+
+                          <div className="flex items-center gap-4">
+                            <span className="font-bold">
+                              {formatPHP(price * quantity)}
+                            </span>
+
+                            <button
+                              type="button"
+                              onClick={() => removeFromCart(id)}
+                              className="text-sm font-semibold text-rose-700 hover:underline"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
+
+            <aside className="space-y-5 lg:sticky lg:top-24">
+              <section className="rounded-2xl border border-stone-200 bg-white p-6 shadow-sm">
+                <h2 className="text-lg font-bold">Order summary</h2>
+
+                <p className="mt-1 text-sm text-stone-500">
+                  Discounts and totals for this basket.
+                </p>
+
                 {activeEvents.length > 0 && (
-                  <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-xl space-y-2">
-                    <div className="flex items-center gap-2 text-emerald-800 text-xs font-bold uppercase tracking-wider">
-                      <Sparkles className="w-4 h-4 text-emerald-600" /> Active Event Discounts
+                  <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                    <div className="mb-3 flex items-center gap-2 text-sm font-bold text-emerald-900">
+                      <Sparkles size={17} /> Active promotions
                     </div>
-                    {activeEvents.map((ev: any, i: number) => (
-                      <div key={i} className="flex justify-between items-center text-xs text-emerald-900">
-                        <span>{ev.title}</span>
-                        <span className="font-bold">-₱{ev.discount_amount}</span>
+
+                    {activeEvents.map((event) => (
+                      <div
+                        key={event.id || event._id || event.title}
+                        className="flex justify-between gap-3 py-1 text-sm text-emerald-900"
+                      >
+                        <span>{event.title}</span>
+
+                        <span className="shrink-0 font-semibold">
+                          {formatPHP(Number(event.discount_amount) || 0)}
+                        </span>
                       </div>
                     ))}
                   </div>
                 )}
 
-                <div>
-                  <div className="flex flex-col sm:flex-row gap-3">
-                    <input
-                      type="text"
-                      value={couponInput || ''}
-                      onChange={(e) => setCouponInput(e.target.value)}
-                      onKeyPress={handleKeyPress}
-                      placeholder="GIFT CODE OR PROMO"
-                      className="flex-1 bg-white border border-slate-300 focus:border-slate-900 text-slate-900 text-xs sm:text-sm uppercase tracking-widest placeholder:text-slate-400 px-4 py-3.5 rounded-xl outline-none transition-all"
-                      disabled={!!appliedCoupon}
-                    />
-                    <button 
-                      onClick={handleApplyCoupon}
-                      disabled={isApplying || !couponInput || !couponInput.trim() || !!appliedCoupon}
-                      className="px-6 py-3.5 sm:py-0 bg-slate-900 hover:bg-slate-800 active:bg-slate-950 text-white font-bold uppercase tracking-widest text-xs rounded-xl transition-all disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap cursor-pointer shadow-sm"
+                {isLoadingEvents && (
+                  <p className="mt-3 text-xs text-stone-500">
+                    Checking current promotions…
+                  </p>
+                )}
+
+                {eventsError && (
+                  <div
+                    role="status"
+                    className="mt-3 rounded-lg bg-amber-50 p-3 text-xs leading-5 text-amber-800"
+                  >
+                    {eventsError}
+
+                    <button
+                      type="button"
+                      onClick={() => void fetchActiveEvents()}
+                      className="ml-1 font-bold underline"
                     >
-                      {isApplying ? '...' : 'APPLY'}
+                      Retry
+                    </button>
+                  </div>
+                )}
+
+                <div className="mt-5">
+                  <label
+                    htmlFor="coupon"
+                    className="mb-2 block text-xs font-bold uppercase tracking-wider text-stone-600"
+                  >
+                    Coupon code
+                  </label>
+
+                  <div className="flex gap-2">
+                    <input
+                      id="coupon"
+                      value={couponInput || ""}
+                      onChange={(event) => setCouponInput(event.target.value)}
+                      onKeyDown={handleCouponKeyDown}
+                      disabled={!!appliedCoupon}
+                      placeholder="Enter code"
+                      className="min-w-0 flex-1 rounded-xl border border-stone-300 px-3 py-3 text-sm outline-none focus:border-emerald-800 focus:ring-2 focus:ring-emerald-100 disabled:bg-stone-100"
+                    />
+
+                    <button
+                      type="button"
+                      onClick={() => void handleApplyCoupon()}
+                      disabled={
+                        isApplying ||
+                        !couponInput?.trim() ||
+                        !!appliedCoupon
+                      }
+                      className="rounded-xl bg-stone-900 px-4 text-xs font-bold text-white transition hover:bg-emerald-900 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {isApplying ? "Wait…" : "Apply"}
                     </button>
                   </div>
 
-                  {couponError && <p className="text-rose-600 text-[10px] sm:text-xs mt-2.5 pl-1 tracking-wide">{couponError}</p>}
-                  {couponSuccess && <p className="text-emerald-600 text-[10px] sm:text-xs mt-2.5 pl-1 tracking-wide">{couponSuccess}</p>}
+                  {couponError && (
+                    <p role="alert" className="mt-2 text-sm text-rose-700">
+                      {couponError}
+                    </p>
+                  )}
+
+                  {couponSuccess && (
+                    <p role="status" className="mt-2 text-sm text-emerald-700">
+                      {couponSuccess}
+                    </p>
+                  )}
 
                   {appliedCoupon && (
-                    <div className="mt-4 flex items-center justify-between bg-white border border-slate-200 text-slate-700 px-4 py-3 rounded-xl text-xs sm:text-sm shadow-2xs">
-                      <div className="flex flex-col">
-                        <span className="font-mono tracking-widest font-bold text-slate-900">{appliedCoupon.code}</span>
-                        <span className="mt-0.5 text-[10px] sm:text-xs text-slate-500">{appliedCoupon.description}</span>
+                    <div className="mt-3 flex items-center justify-between gap-3 rounded-xl bg-stone-50 p-3 text-sm">
+                      <div>
+                        <p className="font-bold">{appliedCoupon.code}</p>
+
+                        <p className="mt-1 text-xs text-stone-500">
+                          {appliedCoupon.description || "Coupon applied"}
+                        </p>
                       </div>
-                      <button 
+
+                      <button
+                        type="button"
                         onClick={handleRemoveCoupon}
-                        className="text-[10px] uppercase tracking-widest font-semibold text-slate-500 hover:text-rose-600 transition-colors underline underline-offset-2 ml-4 cursor-pointer"
+                        className="text-xs font-bold text-rose-700 hover:underline"
                       >
-                        REMOVE
+                        Remove
                       </button>
                     </div>
                   )}
                 </div>
 
-                <div className="space-y-4 text-xs sm:text-sm font-light tracking-wide text-slate-600 border-t border-slate-200 pt-6">
-                  <div className="flex justify-between">
-                    <span>Subtotal</span>
-                    <span className="text-slate-900 tabular-nums font-medium">{formatPHP(cartSubtotal)}</span>
-                  </div>
-
-                  {eventDiscountTotal > 0 && (
-                    <div className="flex justify-between text-emerald-700 font-medium">
-                      <span>Event Discount</span>
-                      <span className="tabular-nums">-{formatPHP(eventDiscountTotal)}</span>
-                    </div>
-                  )}
-
-                  {couponDiscountAmount > 0 && (
-                    <div className="flex justify-between text-emerald-700 font-medium">
-                      <span>Coupon Discount</span>
-                      <span className="tabular-nums">-{formatPHP(couponDiscountAmount)}</span>
-                    </div>
-                  )}
-
-                  <div className="flex justify-between">
-                    <span>Shipping &amp; Handling</span>
-                    <span className="text-emerald-700 font-semibold uppercase text-xs tracking-wider">
-                      FREE Shipping NATIONWIDE
+                <div className="mt-6 space-y-3 border-t border-stone-200 pt-5 text-sm">
+                  <div className="flex justify-between gap-3">
+                    <span className="text-stone-600">Subtotal</span>
+                    <span className="font-medium">
+                      {formatPHP(pricing.subtotal)}
                     </span>
                   </div>
 
-                  <div className="flex justify-between">
-                    <span>Duties &amp; Taxes ({taxPercentageLabel}%)</span>
-                    <span className="text-slate-900 tabular-nums font-medium">{formatPHP(tax)}</span>
-                  </div>
-                </div>
+                  {pricing.eventDiscountTotal > 0 && (
+                    <div className="flex justify-between gap-3 text-emerald-800">
+                      <span>Event discount</span>
+                      <span>
+                        −{formatPHP(pricing.eventDiscountTotal)}
+                      </span>
+                    </div>
+                  )}
 
-                <div className="h-px bg-slate-200 my-6" />
+                  {pricing.couponDiscountAmount > 0 && (
+                    <div className="flex justify-between gap-3 text-emerald-800">
+                      <span>Coupon discount</span>
+                      <span>
+                        −{formatPHP(pricing.couponDiscountAmount)}
+                      </span>
+                    </div>
+                  )}
 
-                <div className="flex justify-between items-baseline mb-8">
-                  <span className="uppercase tracking-[0.15em] text-xs font-semibold text-slate-500">Total Due Now</span>
-                  <div className="text-right">
-                    <span className="text-3xl sm:text-4xl font-black text-slate-900 tracking-tighter tabular-nums">
-                      {formatPHP(total)}
+                  <div className="flex justify-between gap-3">
+                    <span className="text-stone-600">Shipping</span>
+                    <span className="font-semibold text-emerald-800">
+                      Free
                     </span>
-                    <p className="text-[9px] sm:text-[10px] text-slate-500 mt-1 uppercase tracking-widest font-semibold">PHP • INCLUDING TAX</p>
+                  </div>
+
+                  <div className="flex justify-between gap-3">
+                    <span className="text-stone-600">
+                      Tax ({pricing.taxPercentageLabel}%)
+                    </span>
+                    <span className="font-medium">
+                      {formatPHP(pricing.tax)}
+                    </span>
                   </div>
                 </div>
 
-                <button 
-                  onClick={handleProceedToCheckout}
-                  className="w-full py-4 sm:py-5 bg-slate-900 hover:bg-slate-800 active:scale-[0.98] text-white text-xs sm:text-sm font-extrabold uppercase tracking-[0.15em] transition-all duration-300 flex items-center justify-center gap-3 rounded-xl shadow-md cursor-pointer"
+                <div className="mt-5 border-t border-stone-200 pt-5">
+                  <div className="flex items-end justify-between gap-3">
+                    <span className="text-sm font-bold">Total</span>
+
+                    <span className="text-2xl font-black tracking-tight">
+                      {formatPHP(pricing.total)}
+                    </span>
+                  </div>
+
+                  <p className="mt-1 text-right text-xs text-stone-500">
+                    Philippine peso · Tax included
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={proceedToCheckout}
+                  disabled={!cartItems.length}
+                  className="mt-6 flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-emerald-800 px-4 text-sm font-bold text-white transition hover:bg-emerald-900 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  PROCEED TO SECURE CHECKOUT
-                  <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 sm:w-5 sm:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3" />
-                  </svg>
+                  Proceed to checkout <ArrowRight size={17} />
                 </button>
-              </div>
-            </div>
+
+                {!isAuthenticated && (
+                  <p className="mt-3 text-center text-xs leading-5 text-stone-500">
+                    You will need to log in before placing your order.
+                  </p>
+                )}
+              </section>
+            </aside>
           </div>
         )}
       </div>
-    </div>
+    </main>
   );
 };
 

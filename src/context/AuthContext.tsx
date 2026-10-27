@@ -4,8 +4,11 @@ import React, {
   useState,
   useEffect,
   useCallback,
+  useRef,
   ReactNode,
 } from 'react';
+import axios from 'axios';
+import api from '../services/api';
 
 export interface User {
   id: string;
@@ -44,78 +47,66 @@ interface AuthContextType {
   clearError: () => void;
 }
 
-export const AuthContext = createContext<AuthContextType | undefined>(undefined);
+export const AuthContext = createContext<AuthContextType | undefined>(
+  undefined
+);
 
-const API_BASE_URL = 'https://cc-backend-yc-team.onrender.com/api/v1/auth';
+const AUTH_ENDPOINT = '/api/v1/auth';
 
 const extractErrorMessage = (data: any, fallback: string): string => {
   if (!data) return fallback;
   if (typeof data === 'string') return data;
   if (typeof data.detail === 'string') return data.detail;
+
   if (Array.isArray(data.detail)) {
-    return data.detail.map((err: any) => err.msg || JSON.stringify(err)).join(', ');
+    return data.detail
+      .map((item: any) => item.msg || JSON.stringify(item))
+      .join(', ');
   }
+
   if (typeof data.message === 'string') return data.message;
   if (typeof data.error === 'string') return data.error;
   return fallback;
 };
 
+const normalizeUser = (data: any, fallbackEmail = ''): User => {
+  const source = data?.user ?? data?.data?.user ?? data?.data ?? data ?? {};
+
+  return {
+    id: String(source.id || source._id || source.userId || ''),
+    fullName: source.fullName || source.full_name || '',
+    username: source.username || '',
+    email: source.email || fallbackEmail || '',
+    mobile: source.mobile || source.phone || '',
+    birthDate: source.birthDate || source.birth_date || '',
+    gender: source.gender || 'Other',
+    facebook: source.facebook || '',
+    membershipTier: source.membershipTier || source.membership_tier || 'EGB Backyard Member',
+    accountStatus: source.accountStatus || source.account_status || source.status || 'Active',
+    isVerified: Boolean(source.isVerified ?? source.is_verified ?? false),
+    is_admin: Boolean(source.is_admin ?? source.isAdmin ?? false),
+  };
+};
+
+const getError = (error: unknown, fallback: string): string => {
+  if (axios.isAxiosError(error)) {
+    return extractErrorMessage(error.response?.data, error.message || fallback);
+  }
+  return error instanceof Error ? error.message : fallback;
+};
+
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [user, setUser] = useState<User | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const refreshInFlight = useRef<Promise<void> | null>(null);
 
-  const getAuthHeaders = (includeAuth = true) => {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-    if (includeAuth) {
-      const token = localStorage.getItem('token') || localStorage.getItem('access_token');
-      if (token) {
-        headers.Authorization = `Bearer ${token}`;
-      }
-    }
-    return headers;
-  };
-
-  const parseResponse = async (response: Response) => {
-    const text = await response.text();
-    try {
-      return text ? JSON.parse(text) : {};
-    } catch {
-      return { detail: text || `Server error (Status ${response.status})` };
-    }
-  };
-
-  const normalizeUser = (data: any, fallbackEmail = ''): User => {
-    const source = data.user ? data.user : data;
-
-    return {
-      id: source.id || source._id || '',
-      fullName: source.fullName || '',
-      username: source.username || '',
-      email: source.email || fallbackEmail || '',
-      mobile: source.mobile || '',
-      birthDate: source.birthDate || '',
-      gender: source.gender || 'Other',
-      facebook: source.facebook || '',
-      membershipTier: source.membershipTier || 'CC Prime',
-      accountStatus: source.accountStatus || source.status || 'Active',
-      isVerified: !!source.isVerified,
-      is_admin: !!source.is_admin,
-    };
-  };
-
-  // Clears all storage keys smoothly. Removed window.location to allow AppRouter to handle the redirect smoothly.
   const logout = useCallback(() => {
-    console.warn('[Security] Session revoked. Purging authentication tokens.');
     localStorage.removeItem('userProfileData');
     localStorage.removeItem('token');
     localStorage.removeItem('access_token');
     localStorage.removeItem('user');
-    localStorage.removeItem('orders');
-    localStorage.removeItem('cart');
 
     setUser(null);
     setIsAuthenticated(false);
@@ -123,82 +114,85 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setIsLoading(false);
   }, []);
 
-  const refreshUser = useCallback(async () => {
-    const token = localStorage.getItem('token') || localStorage.getItem('access_token');
-    
+  const refreshUser = useCallback(async (): Promise<void> => {
+    if (refreshInFlight.current) {
+      return refreshInFlight.current;
+    }
+
+    const token =
+      localStorage.getItem('token') ||
+      localStorage.getItem('access_token');
+
     if (!token) {
-      setIsAuthenticated(false);
       setUser(null);
+      setIsAuthenticated(false);
       setIsLoading(false);
       return;
     }
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const request = (async () => {
+      try {
+        const response = await api.get(`${AUTH_ENDPOINT}/profile`, {
+          timeout: 10000,
+        });
 
+        const updatedUser = normalizeUser(response.data);
+        if (!updatedUser.id) {
+          // The server response is not a usable profile. Do not trust stale
+          // cached user details as proof of a valid account.
+          logout();
+          return;
+        }
+
+        localStorage.setItem('userProfileData', JSON.stringify(updatedUser));
+        localStorage.setItem('user', JSON.stringify(updatedUser));
+        setUser(updatedUser);
+        setIsAuthenticated(true);
+        setError(null);
+      } catch (err: unknown) {
+        if (axios.isAxiosError(err) && err.response?.status === 401) {
+          logout();
+          return;
+        }
+
+        // Keep a currently cached session during temporary network/server
+        // errors; a transient outage should not automatically sign users out.
+        console.warn('[EGB AuthContext] Profile refresh failed:', getError(err, 'Profile refresh failed.'));
+      } finally {
+        setIsLoading(false);
+      }
+    })();
+
+    refreshInFlight.current = request;
     try {
-      const response = await fetch(`${API_BASE_URL}/profile`, {
-        method: 'GET',
-        signal: controller.signal,
-        headers: getAuthHeaders(),
-      });
-      clearTimeout(timeoutId);
-
-      // FRONTEND SECURITY & ERROR ROUTING GUARD
-      // If the backend returns ANY error (401, 404, or the 500 caused by the deleted user),
-      // we immediately log them out instead of falling back to cached data.
-      if (!response.ok) {
-        console.warn(`[Security] Session validation failed or user deleted (Status ${response.status}). Redirecting smoothly.`);
-        logout();
-        return;
-      }
-
-      const data = await parseResponse(response);
-
-      // Success: Normalize and cache the fresh user data
-      const updatedUser = normalizeUser(data);
-      if (!updatedUser.id) {
-        logout();
-        return;
-      }
-
-      localStorage.setItem('userProfileData', JSON.stringify(updatedUser));
-      setUser(updatedUser);
-      setIsAuthenticated(true);
-      setError(null);
-
-    } catch (err: any) {
-      if (err.name === 'AbortError') {
-        return;
-      }
-      console.warn('[AuthContext] Background refresh paused:', err.message || 'Network disconnected');
+      await request;
     } finally {
-      setIsLoading(false);
+      refreshInFlight.current = null;
     }
   }, [logout]);
 
   useEffect(() => {
     const storedUser = localStorage.getItem('userProfileData');
-    const token = localStorage.getItem('token') || localStorage.getItem('access_token');
+    const token =
+      localStorage.getItem('token') ||
+      localStorage.getItem('access_token');
 
     if (storedUser && token) {
       try {
-        const parsed = JSON.parse(storedUser);
-        setUser(parsed);
+        setUser(JSON.parse(storedUser) as User);
         setIsAuthenticated(true);
-      } catch (err) {
-        logout();
+      } catch {
+        localStorage.removeItem('userProfileData');
+        setUser(null);
+        setIsAuthenticated(false);
       }
-    } else {
-      setIsLoading(false);
     }
 
-    refreshUser();
+    void refreshUser();
 
     const handleFocus = () => {
-      refreshUser();
+      void refreshUser();
     };
-
     const handleSessionExpired = () => logout();
 
     window.addEventListener('focus', handleFocus);
@@ -215,44 +209,37 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setIsLoading(true);
       setError(null);
 
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000);
-
       try {
-        const response = await fetch(`${API_BASE_URL}/login`, {
-          method: 'POST',
-          signal: controller.signal,
-          headers: getAuthHeaders(false),
-          body: JSON.stringify({ email, password }),
-        });
-        clearTimeout(timeoutId);
+        // Do not send an old token with a public login request.
+        const response = await api.post(
+          `${AUTH_ENDPOINT}/login`,
+          { email, password },
+          { headers: { Authorization: undefined }, timeout: 15000 }
+        );
 
-        const data = await parseResponse(response);
-
-        if (!response.ok) {
-          const msg = extractErrorMessage(data, `Login failed (${response.status})`);
-          setError(msg);
-          return { success: false, message: msg };
-        }
-
+        const data = response.data ?? {};
         const token = data.token || data.access_token;
-        if (token) {
-          localStorage.setItem('token', token);
-          localStorage.setItem('access_token', token);
 
-          const userData = normalizeUser(data, email);
-          localStorage.setItem('userProfileData', JSON.stringify(userData));
-          setUser(userData);
-          setIsAuthenticated(true);
-
-          return { success: true, user: userData, token };
+        if (!token) {
+          const message = 'Login failed. The server did not return an access token.';
+          setError(message);
+          return { success: false, message };
         }
 
-        return { success: false, message: 'Login failed. No token received.' };
-      } catch (err: any) {
-        const msg = err.name === 'AbortError' ? 'Connection timed out.' : (err.message || 'Server unreachable.');
-        setError(msg);
-        return { success: false, message: msg };
+        localStorage.setItem('token', token);
+        localStorage.setItem('access_token', token);
+
+        const userData = normalizeUser(data, email);
+        localStorage.setItem('userProfileData', JSON.stringify(userData));
+        localStorage.setItem('user', JSON.stringify(userData));
+        setUser(userData);
+        setIsAuthenticated(true);
+
+        return { success: true, user: userData, token };
+      } catch (err: unknown) {
+        const message = getError(err, 'Unable to connect to the server.');
+        setError(message);
+        return { success: false, message };
       } finally {
         setIsLoading(false);
       }
@@ -265,36 +252,28 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setIsLoading(true);
       setError(null);
 
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000);
-
       try {
-        const response = await fetch(`${API_BASE_URL}/register`, {
-          method: 'POST',
-          signal: controller.signal,
-          headers: getAuthHeaders(false),
-          body: JSON.stringify(userData),
-        });
-        clearTimeout(timeoutId);
+        const response = await api.post(
+          `${AUTH_ENDPOINT}/register`,
+          userData,
+          { headers: { Authorization: undefined }, timeout: 15000 }
+        );
 
-        const data = await parseResponse(response);
-
-        if (!response.ok) {
-          const msg = extractErrorMessage(data, `Registration failed (${response.status})`);
-          setError(msg);
-          return { success: false, message: msg };
-        }
+        const data = response.data ?? {};
+        const returnedUser = data.user || data.data?.user || data;
+        const id = data.userId || data._id || returnedUser?._id || returnedUser?.id;
 
         return {
           success: true,
-          user: data.user || data,
-          userId: data.userId || data._id || data.user?._id || data.user?.id,
-          _id: data._id || data.user?._id || data.user?.id,
+          user: returnedUser,
+          userId: id,
+          _id: id,
+          message: data.message,
         };
-      } catch (err: any) {
-        const msg = err.name === 'AbortError' ? 'Connection timed out.' : (err.message || 'Registration failed.');
-        setError(msg);
-        return { success: false, message: msg };
+      } catch (err: unknown) {
+        const message = getError(err, 'Registration failed.');
+        setError(message);
+        return { success: false, message };
       } finally {
         setIsLoading(false);
       }
@@ -304,26 +283,19 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const deleteAccount = useCallback(async (): Promise<AuthResponse> => {
     setIsLoading(true);
+    setError(null);
+
     try {
-      const response = await fetch(`${API_BASE_URL}/me`, {
-        method: 'DELETE',
-        headers: getAuthHeaders(),
-      });
-
-      const data = await parseResponse(response);
-
-      if (!response.ok) {
-        const msg = extractErrorMessage(data, 'Failed to delete account');
-        setError(msg);
-        return { success: false, message: msg };
-      }
-
+      const response = await api.delete(`${AUTH_ENDPOINT}/me`);
       logout();
-      return { success: true, message: 'Account deleted successfully' };
-    } catch (err: any) {
-      const msg = err.message || 'Failed to delete account.';
-      setError(msg);
-      return { success: false, message: msg };
+      return {
+        success: true,
+        message: response.data?.message || 'Account deleted successfully.',
+      };
+    } catch (err: unknown) {
+      const message = getError(err, 'Failed to delete account.');
+      setError(message);
+      return { success: false, message };
     } finally {
       setIsLoading(false);
     }
@@ -331,24 +303,20 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const clearError = useCallback(() => setError(null), []);
 
-  return (
-    <AuthContext.Provider
-      value={{
-        isAuthenticated,
-        isLoading,
-        user,
-        error,
-        login,
-        register,
-        logout,
-        deleteAccount,
-        refreshUser,
-        clearError,
-      }}
-    >
-      {children}
-    </AuthContext.Provider>
-  );
+  const value = {
+    isAuthenticated,
+    isLoading,
+    user,
+    error,
+    login,
+    register,
+    logout,
+    deleteAccount,
+    refreshUser,
+    clearError,
+  };
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
 
 export const useAuth = () => {
@@ -358,3 +326,5 @@ export const useAuth = () => {
   }
   return context;
 };
+
+export default AuthProvider;

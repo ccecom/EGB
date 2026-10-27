@@ -4,9 +4,12 @@ import React, {
   useState,
   useEffect,
   useCallback,
+  useRef,
   ReactNode,
-} from 'react';
-import { useAuth } from './AuthContext';
+} from "react";
+import axios from "axios";
+import api, { apiErrorMessage } from "../services/api";
+import { useAuth } from "./AuthContext";
 
 export interface OrderItem {
   id: string;
@@ -16,6 +19,7 @@ export interface OrderItem {
   quantity: number;
   image?: string;
   category?: string;
+  _id?: string;
 }
 
 export interface Order {
@@ -30,8 +34,10 @@ export interface Order {
   payment_status?: string;
   items: OrderItem[];
   created_at?: string;
+  createdAt?: string;
   date?: string;
   estimated_delivery?: string;
+  estimatedDelivery?: string;
   shipping_full_name?: string;
   shipping_mobile_number?: string;
   shipping_street?: string;
@@ -41,7 +47,10 @@ export interface Order {
   shipping_zip_code?: string;
   shipping_country?: string;
   shipping_landmark?: string;
-  shippingAddress?: any;
+  shippingAddress?: Record<string, unknown>;
+  shipping_address?: Record<string, unknown>;
+  notes?: string;
+  [key: string]: any;
 }
 
 interface OrderContextType {
@@ -56,168 +65,182 @@ interface OrderContextType {
 
 const OrderContext = createContext<OrderContextType | undefined>(undefined);
 
-// 🔥 DYNAMIC PERMANENT FIX for Orders (same style as AuthContext)
-const getApiBaseUrl = () => {
-  return 'https://cc-backend-yc-team.onrender.com/api/v1';
-};
+const API_V1 = "/api/v1";
+const REQUEST_TIMEOUT_MS = 30000;
 
-const API_BASE_URL = getApiBaseUrl();
+function normalizeOrderList(data: any): Order[] | null {
+  if (Array.isArray(data)) return data;
 
-// 🛠️ Helper — same as AuthContext
-const extractErrorMessage = (data: any, fallback: string): string => {
-  if (!data) return fallback;
-  if (typeof data === 'string') return data;
-  if (typeof data.detail === 'string') return data.detail;
-  if (Array.isArray(data.detail)) {
-    return data.detail.map((err: any) => err.msg || JSON.stringify(err)).join(', ');
+  for (const key of ["orders", "data", "items", "results"]) {
+    if (Array.isArray(data?.[key])) return data[key];
   }
-  if (typeof data.message === 'string') return data.message;
-  if (typeof data.error === 'string') return data.error;
-  return fallback;
-};
 
-export const OrderProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  return null;
+}
+
+export const OrderProvider: React.FC<{ children: ReactNode }> = ({
+  children,
+}) => {
   const [orders, setOrders] = useState<Order[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
   const { user, isAuthenticated } = useAuth();
 
-  const getAuthHeaders = (includeAuth = true) => {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
+  const requestInFlight = useRef<Promise<void> | null>(null);
+  const mounted = useRef(false);
+
+  useEffect(() => {
+    mounted.current = true;
+
+    return () => {  
+      mounted.current = false;  
     };
-    if (includeAuth) {
-      const token = localStorage.getItem('token') || localStorage.getItem('access_token');
-      if (token) {
-        headers.Authorization = 'Bearer ' + token;
-      }
-    }
-    return headers;
-  };
+  }, []);
 
-  const parseResponse = async (response: Response) => {
-    const text = await response.text();
-    try {
-      return text ? JSON.parse(text) : {};
-    } catch {
-      return { detail: text || 'Server error (Status ' + response.status + ')' };
-    }
-  };
-
-  const fetchUserOrders = useCallback(async () => {
+  const fetchUserOrders = useCallback(async (): Promise<void> => {
     if (!isAuthenticated || !user) {
       setOrders([]);
+      setError(null);
       setIsLoading(false);
       return;
     }
 
-    setIsLoading(true);
-    setError(null);
+    if (requestInFlight.current) {  
+      return requestInFlight.current;  
+    }  
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    const userId = user.id || (user as any)._id;  
 
-    try {
-      const userId = user.id || (user as any)._id;
-      if (!userId) {
-        setOrders([]);
-        setIsLoading(false);
-        return;
-      }
+    if (!userId) {  
+      setError("Your account is missing a user ID.");  
+      setOrders([]);  
+      return;  
+    }  
 
-      // ✅ Safe URL — no template literal, no {userId} junk
-      const ordersUrl = API_BASE_URL + '/orders/user/' + encodeURIComponent(String(userId));
+    const request = (async () => {  
+      setIsLoading(true);  
+      setError(null);  
 
-      const response = await fetch(ordersUrl, {
-        method: 'GET',
-        signal: controller.signal,
-        headers: getAuthHeaders(),
-      });
-      clearTimeout(timeoutId);
+      try {  
+        const response = await api.get(  
+          `${API_V1}/orders/user/${encodeURIComponent(String(userId))}`,  
+          { timeout: REQUEST_TIMEOUT_MS },  
+        );  
 
-      const data = await parseResponse(response);
+        const nextOrders = normalizeOrderList(response.data);  
 
-      if (!response.ok) {
-        if (response.status === 401 || response.status === 404) {
-          setOrders([]);
-          return;
-        }
-        const msg = extractErrorMessage(data, 'Failed to fetch orders (' + response.status + ')');
-        setError(msg);
-        throw new Error(msg);
-      }
+        if (nextOrders === null) {  
+          throw new Error(  
+            "The orders endpoint returned an unexpected response format.",  
+          );  
+        }  
 
-      const list = Array.isArray(data) ? data : data.orders || data.data || [];
-      setOrders(list);
-    } catch (err: any) {
-      if (err.name === 'AbortError') {
-        setError('Connection timed out.');
-      } else {
-        console.error('[OrderContext] Fetch error:', err);
-        setError(err.message || 'Could not sync orders with backend.');
-      }
-    } finally {
-      setIsLoading(false);
+        if (mounted.current) {  
+          setOrders(nextOrders);  
+        }  
+      } catch (err: unknown) {  
+        const status = axios.isAxiosError(err)  
+          ? err.response?.status  
+          : undefined;  
+
+        const message =  
+          apiErrorMessage(err, "Could not load your orders.");  
+
+        if (mounted.current) {  
+          setError(  
+            status === 503  
+              ? "The order service is temporarily unavailable. Please try again shortly."  
+              : message,  
+          );  
+        }  
+
+        console.error("[EGB OrderContext] Fetch orders failed:", {  
+          status,  
+          message,  
+        });  
+
+        throw err;  
+      } finally {  
+        if (mounted.current) {  
+          setIsLoading(false);  
+        }  
+      }  
+    })();  
+
+    requestInFlight.current = request;  
+
+    try {  
+      await request;  
+    } finally {  
+      if (requestInFlight.current === request) {  
+        requestInFlight.current = null;  
+      }  
     }
   }, [user, isAuthenticated]);
 
   const cancelOrder = useCallback(
-    async (orderId: string, backendId?: string) => {
+    async (orderId: string, backendId?: string): Promise<void> => {
       const targetId = backendId || orderId;
-      setIsLoading(true);
-      setError(null);
 
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000);
+      if (  
+        !targetId ||  
+        targetId === "undefined" ||  
+        targetId === "null"  
+      ) {  
+        throw new Error("Invalid order ID.");  
+      }  
 
-      try {
-        // ✅ Safe URL — no template literal
-        const cancelUrl =
-          API_BASE_URL + '/orders/' + encodeURIComponent(String(targetId)) + '/status';
+      setIsLoading(true);  
+      setError(null);  
 
-        const response = await fetch(cancelUrl, {
-          method: 'PATCH',
-          signal: controller.signal,
-          headers: getAuthHeaders(),
-          body: JSON.stringify({ status: 'Cancelled' }),
-        });
-        clearTimeout(timeoutId);
+      try {  
+        await api.patch(  
+          `${API_V1}/orders/${encodeURIComponent(String(targetId))}/status`,  
+          { status: "cancelled" },  
+          { timeout: REQUEST_TIMEOUT_MS },  
+        );  
 
-        const data = await parseResponse(response);
+        setOrders((previous) =>  
+          previous.map((order) =>  
+            order._id === targetId ||  
+            order.id === targetId ||  
+            order.order_number === targetId  
+              ? { ...order, status: "cancelled" }  
+              : order,  
+          ),  
+        );  
+      } catch (err: unknown) {  
+        const message = apiErrorMessage(  
+          err,  
+          "Error cancelling the order.",  
+        );  
 
-        if (!response.ok) {
-          const msg = extractErrorMessage(data, 'Failed to cancel order (' + response.status + ')');
-          setError(msg);
-          throw new Error(msg);
-        }
-
-        setOrders((prev) =>
-          prev.map((o) =>
-            o._id === targetId || o.id === targetId || o.order_number === targetId
-              ? { ...o, status: 'Cancelled' }
-              : o
-          )
-        );
-      } catch (err: any) {
-        if (err.name === 'AbortError') {
-          setError('Connection timed out.');
-        } else {
-          console.error('[OrderContext] Cancel error:', err);
-          setError(err.message || 'Error cancelling order.');
-        }
-        throw err;
-      } finally {
-        setIsLoading(false);
-      }
-    },
-    []
+        setError(message);  
+        console.error("[EGB OrderContext] Cancel order failed:", message);  
+        throw err;  
+      } finally {  
+        setIsLoading(false);  
+      }  
+    },  
+    [],
   );
 
-  const clearError = useCallback(() => setError(null), []);
+  const clearError = useCallback(() => {
+    setError(null);
+  }, []);
 
   useEffect(() => {
-    fetchUserOrders();
-  }, [fetchUserOrders]);
+    if (!isAuthenticated || !user) {
+      setOrders([]);
+      setError(null);
+      return;
+    }
+
+    void fetchUserOrders().catch(() => {  
+      // Error is already stored in context.  
+    });
+  }, [fetchUserOrders, isAuthenticated, user]);
 
   return (
     <OrderContext.Provider
@@ -236,12 +259,15 @@ export const OrderProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   );
 };
 
-export const useOrders = () => {
+export const useOrders = (): OrderContextType => {
   const context = useContext(OrderContext);
+
   if (!context) {
-    throw new Error('useOrders must be used within an OrderProvider');
+    throw new Error("useOrders must be used within an OrderProvider");
   }
+
   return context;
 };
 
 export const useOrder = useOrders;
+export default OrderProvider;
